@@ -106,6 +106,7 @@ class SplitLasso(Choosir):
 
         self.unpen = (self.penalty == 0)
         self.overall = (self.observed_soln != 0)
+        self.n_opt_var = n_opt_var = self.overall.sum()
         self.active = ~self.unpen & self.overall
 
         etas = ad.diagnostic.predict(
@@ -124,12 +125,17 @@ class SplitLasso(Choosir):
         )[0]
         self.observed_subgrad = observed_subgrad
 
-        ## I need W
         eta = etas[0]
         grad = np.empty_like(eta)
         self.glm_full.gradient(eta, grad)
         self.W = np.empty_like(eta)
-        self.glm_full.hessian(eta, grad, self.W)
+        self.glm_full.hessian(eta, grad, self.W)# includes 1/n
+
+        ## constraints
+        self.con_linear = -np.eye(n_opt_var)
+        self.con_offset = np.zeros(n_opt_var)
+
+        
 
 
 
