@@ -1,10 +1,13 @@
 [project]
 name = "choosi"
-version = "0.0.0"
+dynamic = ["version"]
 authors = [
     { name="Kevin Fry", email="kfry@stanford.edu" },
 ]
-description = "A small example package"
+maintainers = [
+    { name="Kevin Fry", email="kfry@stanford.edu" },
+]
+description = "Crazy hyper-optimized selective inference"
 readme = "README.md"
 license = {file="LICENSE"}
 requires-python = ">=3.9"
@@ -33,8 +36,10 @@ authors = ["Kevin Fry <kevinbfry@stanford.edu>"]
 python = ">=3.9"
 numpy = ">=1.22.3"
 scipy = ">=1.11.4"
-pytest = ">=7" 
 adelie = ">=1.1.31"
+
+[tool.poetry.group.test.dependencies]
+pytest = ">=7" 
 
 [tool.poetry.group.docs.dependencies]
 sphinx = "^7.2.6"
@@ -48,8 +53,9 @@ pybind11="^2.11.1"
 [build-system]
 requires = [
     "setuptools",
+    "wheel",
     "pybind11",
 ]
 build-backend = "setuptools.build_meta"
-# requires = ["poetry-core>=1.0.0"]
-# build-backend = "poetry.core.masonry.api"
+
+[tool.setuptools_scm]

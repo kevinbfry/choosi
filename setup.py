@@ -1,6 +1,5 @@
 from glob import glob
 from setuptools import setup, find_packages
-from distutils.dir_util import copy_tree
 from pybind11.setup_helpers import Pybind11Extension 
 from pybind11.setup_helpers import ParallelCompile
 import sysconfig
@@ -25,10 +24,8 @@ ParallelCompile("NPY_NUM_BUILD_JOBS").install()
 
 __version__ = open("VERSION", "r").read()
 
-# ENVPATH = os.getenv("CONDA_PREFIX")
-
 extra_compile_args = sysconfig.get_config_var('CFLAGS').split()
-extra_compile_args += ["-Wall", "-Wextra", "-DNDEBUG", "-O3"]
+extra_compile_args += ["-Wall", "-Wextra", "-DNDEBUG", "-O3", "-g0"]
 libraries = []
 extra_link_args = []
 
@@ -46,7 +43,7 @@ if (system_name == "Darwin"):
     libraries = ['omp']
     
 if (system_name == "Linux"):
-    extra_compile_args += ["-fopenmp"]
+    extra_compile_args += ["-fopenmp", "-march=native"]
     libraries = ['gomp']
 
 ext_modules = [
@@ -57,19 +54,20 @@ ext_modules = [
         include_dirs=[
             "choosi/src",
             "choosi/src/include",
-            # os.path.join(ENVPATH, 'include'),
+            "adelie/adelie/src/include",
+            "adelie/adelie/src/third_party/eigen3",
         ],
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
         libraries=libraries,
-        cxx_std=14,
+        cxx_std=17,
     ),
 ]
 
 setup(
     name='choosi', 
     version=__version__,
-    description='A Python package for SNP-related tools.',
+    description='',
     long_description='',
     author='Kevin Fry',
     author_email='kfry@stanford.edu',
@@ -78,8 +76,6 @@ setup(
     packages=["choosi"], 
     package_data={
         "choosi": [
-            "src/**/*.hpp", 
-            "src/third_party/**/*",
             "choosi_core.cpython*",
         ],
     },
