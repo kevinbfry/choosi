@@ -1,0 +1,55 @@
+[project]
+name = "choosi"
+version = "0.0.0"
+authors = [
+    { name="Kevin Fry", email="kfry@stanford.edu" },
+]
+description = "A small example package"
+readme = "README.md"
+license = {file="LICENSE"}
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/kevinbfry/choosi"
+Issues = "https://github.com/kevinbfry/choosi/issues"
+
+[tool.poetry]
+name = "choosi"
+version = "0.0.0"
+description = "Crazy hyper-optimized selective inference"
+authors = ["Kevin Fry <kevinbfry@stanford.edu>"]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+numpy = ">=1.22.3"
+scipy = ">=1.11.4"
+pytest = ">=7" 
+adelie = ">=1.1.31"
+
+[tool.poetry.group.docs.dependencies]
+sphinx = "^7.2.6"
+numpydoc = "^1.6.0"
+pydata-sphinx-theme = "^0.15.2"
+nbsphinx = "^0.9.3"
+
+[tool.poetry.group.dev.dependencies]
+pybind11="^2.11.1"
+
+[build-system]
+requires = [
+    "setuptools",
+    "pybind11",
+]
+build-backend = "setuptools.build_meta"
+# requires = ["poetry-core>=1.0.0"]
+# build-backend = "poetry.core.masonry.api"
