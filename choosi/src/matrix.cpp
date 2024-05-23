@@ -12,13 +12,26 @@ void hessian(
     MatrixType& X,
     const Eigen::Ref<const ad::util::rowvec_type<IndexType>>& subset,
     const Eigen::Ref<const ad::util::rowvec_type<ValueType>>& weights,
-    size_t n_threads
+    Eigen::Ref<ad::util::colmat_type<ValueType>> out
 )
 {
     using vec_index_t = ad::util::rowvec_type<IndexType>;
     using vec_value_t = ad::util::rowvec_type<ValueType>;
 
     // First, write sequential version.
+    size_t n = X.rows();
+    size_t p = X.cols();
+
+    for (size_t i = 0; i < subset.size(); ++i) {
+        vec_value_t Xi(n);
+        X.ctmul(subset[i], 1., Xi);
+        for (size_t j = i; j < subset.size(); ++j) {
+            out(i, j) = X.cmul(subset[j], Xi, weights);
+            if (i != j) {
+                out(j, i) = out(i, j);
+            }
+        }
+    }
 }
 
 void register_matrix(py::module_& m)
