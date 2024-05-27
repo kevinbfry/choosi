@@ -35,28 +35,41 @@ extra_compile_args += [
 include_dirs = [
     "choosi/src",
     "choosi/src/include",
-    "adelie/adelie/src/include",
-    "adelie/adelie/src/third_party/eigen3",
 ]
 libraries = []
 library_dirs = []
 runtime_library_dirs = []
 
-system_name = platform.system()
-if (system_name == "Darwin"):
-    try:
-        conda_path = run_cmd("conda info --base")
-        conda_env_path = os.path.join(conda_path, "envs/choosi")
-    except:
-        conda_env_path = ""
+# check if conda environment activated
+if "CONDA_PREFIX" in os.environ:
+    conda_prefix = os.environ["CONDA_PREFIX"]
+# check if micromamba environment activated (CI)
+elif "MAMBA_ROOT_PREFIX" in os.environ:
+    conda_prefix = os.path.join(os.environ["MAMBA_ROOT_PREFIX"], "envs/choosi")
+else:
+    conda_prefix = None
 
+# add include, include/eigen3, adelie/src/include
+if not (conda_prefix is None):
+    conda_include_path = os.path.join(conda_prefix, "include")
+    eigen_include_path = os.path.join(conda_include_path, "eigen3")
+    adelie_path = run_cmd(f"find {conda_prefix} -name adelie").split()[0]
+    adelie_include_path = os.path.join(adelie_path, "src/include")
+    include_dirs += [
+        conda_include_path,
+        eigen_include_path,
+        adelie_include_path,
+    ]
+
+system_name = platform.system()
+if system_name == "Darwin":
     # if user provides OpenMP install prefix (containing lib/ and include/)
     if "OPENMP_PREFIX" in os.environ and os.environ["OPENMP_PREFIX"] != "":
         omp_prefix = os.environ["OPENMP_PREFIX"]
 
     # else if conda environment is activated
-    elif os.path.isdir(conda_env_path):
-        omp_prefix = conda_env_path
+    elif not (conda_prefix is None):
+        omp_prefix = conda_prefix
     
     # otherwise check brew installation
     else:
@@ -80,16 +93,16 @@ if (system_name == "Darwin"):
     omp_lib = os.path.join(omp_prefix, "lib")
 
     # augment arguments
-    include_dirs += [f"{omp_include}"]
+    include_dirs += [omp_include]
     extra_compile_args += [
         "-Xpreprocessor",
         "-fopenmp",
     ]
-    runtime_library_dirs += [f"{omp_lib}"]
-    library_dirs += [f"{omp_lib}"]
+    runtime_library_dirs += [omp_lib]
+    library_dirs += [omp_lib]
     libraries += ['omp']
     
-if (system_name == "Linux"):
+if system_name == "Linux":
     extra_compile_args += [
         "-fopenmp", 
         "-march=native",
@@ -121,6 +134,8 @@ setup(
     packages=["choosi"], 
     package_data={
         "choosi": [
+            "src/**/*.hpp",
+            "src/**/*.cpp",
             "choosi_core.cpython*",
         ],
     },
