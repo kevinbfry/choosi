@@ -4,5 +4,6 @@ channels:
 dependencies:
   - python==3.9
   - pip
+  - llvm-openmp==11.1.0
   - pip:
     - poetry
