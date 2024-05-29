@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import adelie as ad
+from .optimizer import QNM
 from .choosir import Choosir
 
 ## TODO
@@ -135,9 +136,7 @@ class SplitLasso(Choosir):
         self.con_linear = -np.eye(n_opt_var)
         self.con_offset = np.zeros(n_opt_var)
 
-        
-
-
+        ## TODO
 
 
 
