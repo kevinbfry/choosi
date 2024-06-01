@@ -3,4 +3,3 @@ __pycache__
 *.so
 *.dylib
 *.egg-info
-build/

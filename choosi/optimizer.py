@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.sparse.linalg import LinearOperator
 from abc import ABC, abstractmethod
 
 
@@ -9,7 +10,91 @@ class Optimizer(object):
     ):
         pass
 
-class QNM(Optimizer):
+class AbstractNMOptimizer(Optimizer):
+    def __init__(
+        self,
+        linear_term, # v
+        quad_form, # H
+        signs, # S
+        scaling, # s
+        lmda=1., # penalty param
+    ):
+        self.v = self.linear_term = linear_term
+        self.H = quad_form
+        self.signs = signs
+        self.scaling = scaling
+        self.lmda=lmda
+    
+
+    @abstractmethod
+    def _get_hessinv(self, z):
+        pass
+
+
+    @abstractmethod
+    def _get_obj(self, z):
+        return .5*z.dot(self.H @ z) + self.v.dot(z) - self.lmda * np.log((self.signs * z) / self.scaling).sum()
+
+
+    @abstractmethod
+    def _get_grad(self, z):
+        return self.H @ z + self.v - self.lmda / z
+
+
+    def optimize(
+        self,
+        max_iters=100,
+        c=.5,
+        tau=.5,
+        tol=1e-8,
+    ):
+        return self._optimize(
+            max_iters=max_iters,
+            c=c,
+            tau=tau,
+            tol=tol,
+        )
+
+
+    def _optimize(
+        self,
+        max_iters=100,
+        c=.5,
+        tau=.5,
+        tol=1e-8,
+    ):
+        z_new = 1. / self.scaling 
+        grad_new = self._get_grad(z_new)
+        for i in range(max_iters):
+            step_size = 1.
+
+            z_prev = z_new
+            grad_prev = grad_new
+
+            H_inv = self._get_hessinv(z_prev)
+            p = -H_inv @ grad_prev
+            z_new = z_prev + step_size * p
+            t = -c*grad_prev.dot(p)
+            obj_prev = self._get_obj(z_prev)
+            obj_new = self._get_obj(z_new)
+            ct = 0
+            while np.isnan(obj_new) or obj_prev - obj_new < step_size * t:
+                if ct == 20: break
+                ct += 1
+                step_size = tau * step_size
+                z_new = z_prev + step_size * p
+                obj_new = self._get_obj(z_new)
+
+            if ct == 20:
+                break
+
+            grad_new = self._get_grad(z_new)
+            if i > 0 and (grad_new - grad_prev).dot(z_new - z_prev) < tol:
+                break
+
+        return z_new
+
+class QNMOptimizer(AbstractNMOptimizer):
     def __init__(
         self,
         linear_term, # v
@@ -17,18 +102,18 @@ class QNM(Optimizer):
         quad_form_approx, # (Q,\Lambda) where H \approx Q\LambdaQ'
         signs, # S
         scaling, # s
-        max_iters=100,
-        c=.5,
-        tau=.5,
-        tol=1e-4,
+        lmda=1., # penalty param
     ):
-        self.v = linear_term
-        self.H = quad_form
+        super().__init__(
+            linear_term,
+            quad_form,
+            signs,
+            scaling,
+            lmda,
+        )
         self.Q, self.Lambda = quad_form_approx
-        self.w = self.Q.T @ self.v
-        self.signs = signs
+        self.v = self.Q.T @ self.linear_term
         self.SQ = signs[:,None] * self.Q
-        self.scaling = scaling
     
 
     ## invert using woodbury matrix identity
@@ -38,7 +123,7 @@ class QNM(Optimizer):
         Lambda_inv_SQ = Lambda_inv[:,None] * self.SQ
         M = self.Q.T @ (Lambda_inv[:,None] * self.Q)
         for i in range(SQz.shape[0]):
-            M[i,i] += SQz[i]**2 
+            M[i,i] += SQz[i]**2 / self.lmda 
         soln = np.linalg.solve(M, Lambda_inv_SQ.T)
 
         woodbury_inv = np.diag(Lambda_inv) - Lambda_inv_SQ @ soln
@@ -47,11 +132,11 @@ class QNM(Optimizer):
 
 
     def _get_obj(self, z):
-        return .5*(z**2 * self.Lambda).sum() + self.w.dot(z) - np.log((self.SQ @ z) / self.scaling).sum()
+        return .5*(z**2 * self.Lambda).sum() + self.v.dot(z) - self.lmda * np.log((self.SQ @ z) / self.scaling).sum()
 
 
     def _get_grad(self, z):
-        return z * self.Lambda + self.w - (self.SQ / (self.SQ @ z)).sum(0)
+        return z * self.Lambda + self.v - self.lmda * (self.SQ / (self.SQ @ z)).sum(0)
 
         
     def optimize(
@@ -59,7 +144,7 @@ class QNM(Optimizer):
         max_iters=100,
         c=.5,
         tau=.5,
-        tol=1e-4,
+        tol=1e-8,
     ):
         ## TODO: wrap and solve multiple times for path of weighting of obj and barrier
 
@@ -75,42 +160,31 @@ class QNM(Optimizer):
         ## hess_inv computed with Sherman-Morrison-Woodbury
         ## H_inv = \Lambda^{-1} - \Lambda^{-1} SQ[diag(1/SQz^2) + Q'S' \Lambda^{-1} SQ]^{-1} Q'S' \Lambda^{-1}
         ##       = \Lambda^{-1} - \Lambda^{-1} SQ[diag(1/SQz^2) + Q' \Lambda^{-1} Q]^{-1} Q'S' \Lambda^{-1}
-        Q, Lambda = self.Q, self.Lambda
-        SQ = self.SQ
-        w = self.w
 
         ## update is z_new = z_prev - H_inv(z_prev) grad(z_old)
-        grad_new = np.zeros(Q.shape[1])
-        z_new = 1. / self.scaling # np.zeros(Q.shape[1])
-        for i in range(max_iters):
-            step_size = 1.
+        z_opt = self._optimize(
+            max_iters=max_iters,
+            c=c,
+            tau=tau,
+            tol=tol,
+        )
 
-            z_prev = z_new
-            H_inv = self._get_hessinv(z_prev)
-            grad_prev = grad_new
-            grad_new = self._get_grad(z_prev)
-            p = -H_inv @ grad_new
-            z_new = z_prev + step_size * p
-            if i > 0 and (grad_new-grad_prev).dot(z_new - z_prev) < tol:
-                break
-            t = -c*grad_new.dot(p / (p**2).sum())
-            while self._get_obj(z_prev) - self._get_obj(z_new) > step_size * t:
-                step_size = tau * step_size
-                z_new = z_prev + step_size * p
+        return self.Q @ z_opt
 
 
-        return Q @ z_new
+class GDOptimizer(AbstractNMOptimizer):
+    def _get_hessinv(self, z):
+        identity = lambda x: x
+        return LinearOperator(
+            shape=(z.shape[0],z.shape[0]), 
+            matvec=identity,
+            rmatvec=identity, 
+            matmat=identity,
+            rmatmat=identity,
+        )
+    
 
-
-class GD(Optimizer):
-    def optimize(
-        self,
-        linear_term,
-        quad_form,
-    ):
-        pass
-        
-class CD(Optimizer):
+class CDOptimizer(Optimizer):
     ## UNSURE if this will be fast. Can use as warm start for barrier problem
     ## barrier problem has better inference properties
     def optimize(

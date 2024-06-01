@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import adelie as ad
-from .optimizer import QNM
+from .optimizer import QNMOptimizer
 from .choosir import Choosir
 
 ## TODO
@@ -107,7 +107,7 @@ class SplitLasso(Choosir):
 
         self.unpen = (self.penalty == 0)
         self.overall = (self.observed_soln != 0)
-        self.n_opt_var = n_opt_var = self.overall.sum()
+        self.n_opt_var = self.overall.sum()
         self.active = ~self.unpen & self.overall
 
         etas = ad.diagnostic.predict(
@@ -133,10 +133,26 @@ class SplitLasso(Choosir):
         self.glm_full.hessian(eta, grad, self.W)# includes 1/n
 
         ## constraints
-        self.con_linear = -np.eye(n_opt_var)
-        self.con_offset = np.zeros(n_opt_var)
+        self.con_linear = -np.eye(self.n_opt_var)
+        self.con_offset = np.zeros(self.n_opt_var)
 
-        ## TODO
+        ## opt conditional mean, prec
+        # cond_mean = self.observed_soln[self.active] ## \bar\beta_E - \lambda(XE.T XE)^{-1}z_E = \hat\beta_E
+        # cond_prec = self.hess_E ## XE.T XE
+
+
+    def infer(self):
+        ## solve optimization problem
+
+
+        ## compute selective MLE from solution
+
+
+        ## compute fisher info from solution
+        pass
+
+
+        
 
 
 
