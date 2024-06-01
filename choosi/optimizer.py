@@ -63,9 +63,10 @@ class AbstractNMOptimizer(Optimizer):
         tau=.5,
         tol=1e-8,
     ):
-        z_new = 1. / self.scaling 
+        z_new = self.signs / self.scaling 
         grad_new = self._get_grad(z_new)
         for i in range(max_iters):
+            print(f"iter {i}")
             step_size = 1.
 
             z_prev = z_new
@@ -78,18 +79,22 @@ class AbstractNMOptimizer(Optimizer):
             obj_prev = self._get_obj(z_prev)
             obj_new = self._get_obj(z_new)
             ct = 0
+            # assert(0==1)
             while np.isnan(obj_new) or obj_prev - obj_new < step_size * t:
-                if ct == 20: break
+                if ct == 40: break
                 ct += 1
                 step_size = tau * step_size
                 z_new = z_prev + step_size * p
                 obj_new = self._get_obj(z_new)
+                # print(z_prev, z_new, obj_prev, obj_new)
 
-            if ct == 20:
+            if ct == 40:
+                print("hit 20, giving up")
                 break
 
             grad_new = self._get_grad(z_new)
             if i > 0 and (grad_new - grad_prev).dot(z_new - z_prev) < tol:
+                print("close enough, returning")
                 break
 
         return z_new

@@ -34,6 +34,7 @@ def test_hessinv(n, p):
 @pytest.mark.parametrize("n, p", [
     [100, 10],
     [200, 100],
+    [400, 200],
 ])
 def test_qnm(n, p):
     X = np.asfortranarray(np.random.randn(n,p))
@@ -60,8 +61,10 @@ def test_qnm(n, p):
 @pytest.mark.parametrize("n, p", [
     [100, 10],
     [200, 100],
+    [400, 200],
 ])
 def test_gd(n, p):
+    np.random.seed(12)
     X = np.asfortranarray(np.random.randn(n,p))
     H = X.T @ X / n
 
@@ -75,8 +78,8 @@ def test_gd(n, p):
 
     x_soln = np.linalg.pinv(X) @ y
 
-    gd = cs.optimizer.GDOptimizer(v, H, signs, scaling, lmda=1e-6)
-    x_opt = gd.optimize(max_iters=10000, tau=.5, tol=1e-20)
+    gd = cs.optimizer.GDOptimizer(v, H, signs, scaling, lmda=1e-10)
+    x_opt = gd.optimize(max_iters=1000000, tau=.5, tol=1e-20)
 
     assert np.allclose(x_opt, x_soln)
 
