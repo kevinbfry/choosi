@@ -193,17 +193,18 @@ class CQNMOptimizer(NMOptimizer):
             self.H_chol = np.linalg.cholesky(self.H)
         Sz = self.signs * z
         self.H_barrier_diag = np.sqrt(self.lmda) / Sz
-        self.H_quasi_chol = self.H_chol
-        self.H_quasi_chol[np.diag_indices_from(self.H_quasi_chol)] += self.H_barrier_diag
-
         def trisolve_matvec(b):
-            y = solve_triangular(self.H_quasi_chol, b, lower=True, check_finite=False)
-            x = solve_triangular(self.H_quasi_chol.T, y, lower=False, check_finite=False)
+            self.H_chol[np.diag_indices_from(self.H_chol)] += self.H_barrier_diag
+
+            y = solve_triangular(self.H_chol, b, lower=True, check_finite=False)
+            x = solve_triangular(self.H_chol.T, y, lower=False, check_finite=False)
+
+            self.H_chol[np.diag_indices_from(self.H_chol)] -= self.H_barrier_diag
 
             return x
 
         self.H_inv = LinearOperator(
-            shape=self.H_quasi_chol.shape,
+            shape=self.H_chol.shape,
             matvec=trisolve_matvec,
         )
 

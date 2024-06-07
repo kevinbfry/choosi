@@ -97,6 +97,7 @@ def test_cqnm(n, p):
 
     assert np.allclose(x_opt, x_soln)
 
+
 @pytest.mark.parametrize("n, p", [
     [100, 10],
     [200, 100],
