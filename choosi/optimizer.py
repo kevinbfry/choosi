@@ -73,6 +73,7 @@ class NMOptimizer(Optimizer):
         c=.5,
         tau=.5,
         tol=1e-8,
+        maxiters=100,
     ):
         z_new = self.signs / self.scaling 
         grad_new = self._get_grad(z_new)
@@ -92,15 +93,15 @@ class NMOptimizer(Optimizer):
             ct = 0
             # assert(0==1)
             while np.isnan(obj_new) or obj_prev - obj_new < step_size * t:
-                if ct == 100: break
+                if ct == maxiters: break
                 ct += 1
                 step_size = tau * step_size
                 z_new = z_prev + step_size * p
                 obj_new = self._get_obj(z_new)
                 # print(z_prev, z_new, obj_prev, obj_new)
 
-            if ct == 100:
-                print("hit 100, giving up")
+            if ct == maxiters:
+                print(f"hit {maxiters}, giving up")
                 break
 
             grad_new = self._get_grad(z_new)
@@ -191,8 +192,7 @@ class CQNMOptimizer(NMOptimizer):
     def _get_hessinv(self, z):
         if not hasattr(self, "H_chol"):
             self.H_chol = np.linalg.cholesky(self.H)
-        Sz = self.signs * z
-        self.H_barrier_diag = np.sqrt(self.lmda) / Sz
+        self.H_barrier_diag = np.sqrt(self.lmda) / np.fabs(z)
         def trisolve_matvec(b):
             self.H_chol[np.diag_indices_from(self.H_chol)] += self.H_barrier_diag
 
