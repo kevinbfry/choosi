@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import adelie as ad
-from .optimizer import QNMOptimizer
+from .optimizer import EQNMOptimizer
 from .choosir import Choosir
 
 ## TODO
@@ -139,6 +139,8 @@ class SplitLasso(Choosir):
         ## opt conditional mean, prec
         # cond_mean = self.observed_soln[self.active] ## \bar\beta_E - \lambda(XE.T XE)^{-1}z_E = \hat\beta_E
         # cond_prec = self.hess_E ## XE.T XE
+
+        
 
 
     def infer(self):
