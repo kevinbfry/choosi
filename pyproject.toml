@@ -49,6 +49,7 @@ nbsphinx = "^0.9.3"
 
 [tool.poetry.group.dev.dependencies]
 pybind11="^2.11.1"
+ipykernel = "^6.29.4"
 
 [build-system]
 requires = [
