@@ -54,13 +54,13 @@ class NMOptimizer(Optimizer):
 
     def optimize(
         self,
-        max_iters=100,
+        max_steps=100,
         c=.5,
         tau=.5,
         tol=1e-8,
     ):
         return self._optimize(
-            max_iters=max_iters,
+            max_steps=max_steps,
             c=c,
             tau=tau,
             tol=tol,
@@ -69,15 +69,15 @@ class NMOptimizer(Optimizer):
 
     def _optimize(
         self,
-        max_iters=100,
+        max_steps=100,
         c=.5,
         tau=.5,
         tol=1e-8,
-        maxiters=100,
+        ls_max_iters=100,
     ):
         z_new = self.signs / self.scaling 
         grad_new = self._get_grad(z_new)
-        for i in range(max_iters):
+        for i in range(max_steps):
             # print(f"iter {i}")
             step_size = 1.
 
@@ -93,15 +93,15 @@ class NMOptimizer(Optimizer):
             ct = 0
             # assert(0==1)
             while np.isnan(obj_new) or obj_prev - obj_new < step_size * t:
-                if ct == maxiters: break
+                if ct == ls_max_iters: break
                 ct += 1
                 step_size = tau * step_size
                 z_new = z_prev + step_size * p
                 obj_new = self._get_obj(z_new)
                 # print(z_prev, z_new, obj_prev, obj_new)
 
-            if ct == maxiters:
-                print(f"hit {maxiters}, giving up")
+            if ct == ls_max_iters:
+                print(f"hit {ls_max_iters}, giving up")
                 break
 
             grad_new = self._get_grad(z_new)
@@ -157,7 +157,7 @@ class EQNMOptimizer(NMOptimizer):
         
     def optimize(
         self,
-        max_iters=100,
+        max_steps=100,
         c=.5,
         tau=.5,
         tol=1e-8,
@@ -179,7 +179,7 @@ class EQNMOptimizer(NMOptimizer):
 
         ## update is z_new = z_prev - H_inv(z_prev) grad(z_old)
         z_opt = self._optimize(
-            max_iters=max_iters,
+            max_steps=max_steps,
             c=c,
             tau=tau,
             tol=tol,

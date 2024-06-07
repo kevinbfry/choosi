@@ -47,7 +47,7 @@ def test_nm(n, p):
     signs = np.sign(x_soln) 
 
     qnm = cs.optimizer.NMOptimizer(v, H, signs, scaling, lmda=1e-10)
-    x_opt = qnm.optimize(max_iters=1000000, tau=.5, c=.5, tol=1e-20)
+    x_opt = qnm.optimize(max_steps=1000000, tau=.5, c=.5, tol=1e-20)
 
     assert np.allclose(x_opt, x_soln)
 
@@ -70,7 +70,7 @@ def test_dqnm(n, p):
     signs = np.sign(x_soln) 
     
     qnm = cs.optimizer.DQNMOptimizer(v, H, signs, scaling, lmda=1e-10)
-    x_opt = qnm.optimize(max_iters=1000000, tau=.5, c=.5, tol=1e-20)
+    x_opt = qnm.optimize(max_steps=1000000, tau=.5, c=.5, tol=1e-20)
 
     assert np.allclose(x_opt, x_soln)
 
@@ -93,7 +93,7 @@ def test_cqnm(n, p):
     signs = np.sign(x_soln) 
     
     qnm = cs.optimizer.CQNMOptimizer(v, H, signs, scaling, lmda=1e-6)
-    x_opt = qnm.optimize(max_iters=100, tau=.5, c=.5, tol=1e-10)
+    x_opt = qnm.optimize(max_steps=100, tau=.5, c=.5, tol=1e-10)
 
     assert np.allclose(x_opt, x_soln)
 
@@ -118,7 +118,7 @@ def test_eqnm(n, p):
     eigvals, eigvecs = eigsh(H, k=p)
 
     qnm = cs.optimizer.EQNMOptimizer(v, H, (eigvecs, eigvals), signs, scaling, lmda=1e-6)
-    x_opt = qnm.optimize(max_iters=100, tau=.5, c=.5, tol=1e-10)
+    x_opt = qnm.optimize(max_steps=100, tau=.5, c=.5, tol=1e-10)
 
     assert np.allclose(x_opt, x_soln)
 
@@ -142,7 +142,7 @@ def test_gd(n, p):
     signs = np.sign(x_soln) 
 
     gd = cs.optimizer.GDOptimizer(v, H, signs, scaling, lmda=1e-10)
-    x_opt = gd.optimize(max_iters=1000000, tau=.5, tol=1e-20)
+    x_opt = gd.optimize(max_steps=1000000, tau=.5, tol=1e-20)
 
     assert np.allclose(x_opt, x_soln)
 
