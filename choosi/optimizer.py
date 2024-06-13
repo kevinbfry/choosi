@@ -17,20 +17,34 @@ class NMOptimizer(Optimizer):
         linear_term, # v
         quad_form, # H
         signs, # S
-        scaling, # s
+        # scaling, # s
+        # con_linear,
+        pen_idxs=None,
         lmda=1., # penalty param
     ):
         self.v = self.linear_term = linear_term
         self.H = quad_form
         self.signs = signs
-        self.scaling = scaling
+        # self.scaling = scaling
+        if pen_idxs is None:
+            self.pen_idxs = np.ones_like(signs)
+        else:
+            self.pen_idxs = pen_idxs
         self.lmda=lmda
+
+        # self.scaling = np.sqrt(np.diag(signs[:,None] * quad_form * signs))
+        self.scaling = np.sqrt(np.diag(quad_form))
+
+    
+    @abstractmethod
+    def get_barrier_hess(self, z):
+        return self.lmda / z**2
 
 
     @abstractmethod
     def _get_hessinv(self, z):
         self.hess = self.H
-        self.hess[np.diag_indices_from(self.hess)] += self.lmda / z**2
+        self.hess[np.diag_indices_from(self.hess)] += self.get_barrier_hess(z)#self.lmda / z**2
         # self.H_inv = np.linalg.inv(self.hess)
         def solve_matvec(x):
             return np.linalg.solve(self.hess, x)
@@ -118,19 +132,23 @@ class EQNMOptimizer(NMOptimizer):
         quad_form, # H
         quad_form_approx, # (Q,\Lambda) where H \approx Q\LambdaQ'
         signs, # S
-        scaling, # s
+        # scaling, # s
+        # con_linear,
+        pen_idxs=None,
         lmda=1., # penalty param
     ):
         super().__init__(
             linear_term,
             quad_form,
             signs,
-            scaling,
+            # scaling,
+            # con_linear,
+            pen_idxs,
             lmda,
         )
         self.Q, self.Lambda = quad_form_approx
         self.v = self.Q.T @ self.linear_term
-        self.SQ = signs[:,None] * self.Q
+        self.SQ = signs[:,None] * self.Q# / self.scaling[:,None]
     
 
     ## invert using woodbury matrix identity
