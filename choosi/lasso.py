@@ -45,7 +45,7 @@ class SplitLasso(Choosir):
         exec(f"self.glm_tr = ad.glm.{family}(self.y_tr)")
 
         if fit_intercept:
-            self.penalty=np.concatenate(([0],penalty)) ## TODO: add intercept optionality, eventually unpenalized indices
+            self.penalty=np.concatenate(([0],penalty)) ## TODO: add unpenalized indices optionality
         else:
             self.penalty = np.array(penalty)
 
@@ -61,11 +61,13 @@ class SplitLasso(Choosir):
         if not isinstance(X, ad.matrix.MatrixNaiveBase64):
             ad_X = ad.matrix.dense(X)
         
-        self.glm = glm = ad.glm.gaussian(y) ## TODO: rn just gaussian
+        # self.glm = glm = ad.glm.gaussian(y) ## TODO: rn just gaussian
+        glm = self.glm_tr
 
         prev_val_obj = np.inf
         self.observed_beta = None
         self.observed_intercept = None
+        self.lmda = 0
 
         def val_exit_cond(state):
             if state.betas.shape[0] < 2:
@@ -78,7 +80,12 @@ class SplitLasso(Choosir):
                 self.observed_intercept = state.intercepts[-1:]
             else:
                 self.observed_intercept = np.zeros((1))
-            self.lmda = state.lmdas[-1]
+            # self.lmda = state.lmdas[-1]
+            if self.lmda == 50:
+                self.lmda = state.lmdas[-1]
+                return True
+            self.lmda += 1
+            return False
 
             ## TODO: change to Rsq
             val_obj = ad.diagnostic.objective(
@@ -121,6 +128,8 @@ class SplitLasso(Choosir):
     
     def _selected_estimator(self, X, glm):
         features = self.overall
+        if self.fit_intercept:
+            features = features[1:]
         penalty = np.ones(X.shape[1])
         penalty[features] = 0
 
@@ -144,9 +153,11 @@ class SplitLasso(Choosir):
 
     def extract_event(self):
         if not isinstance(self.X_full, ad.matrix.MatrixNaiveBase64):
-            ad_X = ad.matrix.dense(self.X_full)
+            ad_X_full = ad.matrix.dense(self.X_full)
+            ad_X = ad.matrix.dense(self.X_tr)
         else:
-            ad_X = self.X_full
+            ad_X_full = self.X_full
+            ad_X = self.X_tr
 
         self.unpen = (self.penalty == 0)
         self.overall = (self.observed_soln != 0)
@@ -161,8 +172,8 @@ class SplitLasso(Choosir):
         unpenalized from constraints so that unpenalized
         parameters can be negative.
         """
-        self.signs = self.observed_soln#[self.overall]
-        self.signs[self.unpen] = 0.#1.
+        self.signs = np.sign(self.observed_soln)#[self.overall]
+        # self.signs[self.unpen] = 1.
         self.signs = self.signs[self.overall]
 
         etas = ad.diagnostic.predict(
@@ -171,7 +182,8 @@ class SplitLasso(Choosir):
             intercepts=self.observed_intercept,
         )
         resids = ad.diagnostic.residuals(
-            glm=self.glm_full,
+            # glm=self.glm_full,
+            glm=self.glm_tr,
             etas=etas,
         )
         observed_subgrad = ad.diagnostic.gradients(
@@ -180,23 +192,33 @@ class SplitLasso(Choosir):
             n_threads=self.n_threads,
         )[0]
         self.observed_subgrad = observed_subgrad
+        if self.fit_intercept:
+            self.observed_subgrad = np.concatenate(([resids.sum()],self.observed_subgrad))
 
         eta = etas[0]
         grad = np.empty_like(eta)
-        self.glm_full.gradient(eta, grad)
+        # self.glm_full.gradient(eta, grad)
+        self.glm_tr.gradient(eta, grad)
         self.W = np.empty_like(eta)
-        self.glm_full.hessian(eta, grad, self.W)# includes 1/n
+        # self.glm_full.hessian(eta, grad, self.W)# includes 1/n
+        self.glm_tr.hessian(eta, grad, self.W)# includes 1/n
 
         ## constraints
         self.con_linear = -np.eye(self.n_opt_var)
         self.con_offset = np.zeros(self.n_opt_var)
 
 
-        self.beta_unpen = self._selected_estimator(ad_X, ad.glm.gaussian(self.y_full))
+        self.beta_unpen = self._selected_estimator(ad_X_full, self.glm_full)
 
         ## opt conditional mean, prec
         self.alpha = (1 - self.pi) / self.pi
-        X_E = self.X_full[:, self.active]
+        if self.fit_intercept:
+            # X_E = np.hstack((np.ones((self.X_tr.shape[0],1)), self.X_tr))[:, self.overall]#[:, self.active]
+            X_E = np.hstack((np.ones((self.X_full.shape[0],1)), self.X_full))[:, self.overall]#[:, self.active]
+        else:
+            # X_E = self.X_tr[:, self.overall]#[:, self.active]
+            X_E = self.X_full[:, self.overall]#[:, self.active]
+        # self.H_E = X_E.T @ X_E / len(self.y_tr)
         self.H_E = X_E.T @ X_E / len(self.y_full)
 
         return self
@@ -209,25 +231,27 @@ class SplitLasso(Choosir):
         H_E = self.H_E
         alpha = self.alpha
         self.H_E_inv = H_E_inv = np.linalg.inv(H_E)
-        cond_prec = H_E / alpha ## needs to scale by (1 - pi) / pi
-        cond_mean = self.beta_unpen - H_E @ (self.penalty[self.overall] * self.signs) ## \bar\beta_E - \lambda(X_E.T X_E)^{-1}z_E
+        self.cond_cov = cond_cov = H_E_inv / len(self.y_full)
+        self.cond_prec = cond_prec = H_E * len(self.y_full) / alpha ## need to undo division by n ## needs to scale by (1 - pi) / pi
+        self.cond_mean = cond_mean = self.beta_unpen - H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs) ## \bar\beta_E - \lambda(X_E.T X_E)^{-1}z_E
 
         ## call optimizer
-        optimizer = CQNMOptimizer(
-            linear_term=cond_mean,
+        self.optimizer = optimizer = CQNMOptimizer(
+            linear_term=-cond_prec @ cond_mean,
             quad_form=cond_prec,
             signs=self.signs, ## TODO: update Optimizer class to disregard signs for unpenalized variables (affects obj, grad, hess)
             # scaling=np.ones_like(self.signs),#np.sqrt(np.diag(cond_mean.dot(cond_prec).dot(cond_mean.T))), ## TODO: scaling needs to be dynamic, should be integrated into Optimizer class. Prob need to change hessians/gradients
-            pen_idxs=self.penalty[self.overall],
-            lmda=1e-8,
+            pen_idxs=self.penalty[self.overall] != 0,
+            lmda=1,
         )
 
         soln = optimizer.optimize()
-        H_E_barrier = H_E / alpha
-        H_E_barrier[np.diag_indices_from(H_E_barrier)] += optimizer.get_barrier_hess(soln)
+        hess_barrier = cond_prec.copy()
+        # H_E_barrier[np.diag_indices_from(H_E_barrier)] += optimizer.get_barrier_hess(soln)
+        hess_barrier[np.diag_indices_from(hess_barrier)] += optimizer.barrier.get_hess_diag(soln)
 
         sel_MLE = self.beta_unpen + (cond_mean - soln) / alpha
-        sel_MLE_std = np.sqrt(np.diag((1 + 1./alpha) * H_E_inv - np.linalg.inv(H_E_barrier) / alpha**2))
+        sel_MLE_std = np.sqrt(np.diag((1 + 1./alpha) * cond_cov - np.linalg.inv(hess_barrier) / alpha**2))
 
         return (sel_MLE, sel_MLE_std)
 

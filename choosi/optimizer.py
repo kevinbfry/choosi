@@ -3,6 +3,8 @@ from scipy.sparse.linalg import LinearOperator
 from scipy.linalg import solve_triangular
 from abc import ABC, abstractmethod
 
+from choosi.barrier import LogBarrier, InvLogBarrier
+
 
 class Optimizer(object):
     @abstractmethod
@@ -10,6 +12,7 @@ class Optimizer(object):
         self,
     ):
         pass
+
 
 class NMOptimizer(Optimizer):
     def __init__(
@@ -20,6 +23,7 @@ class NMOptimizer(Optimizer):
         # scaling, # s
         # con_linear,
         pen_idxs=None,
+        barrier_type="invlog",
         lmda=1., # penalty param
     ):
         self.v = self.linear_term = linear_term
@@ -27,24 +31,39 @@ class NMOptimizer(Optimizer):
         self.signs = signs
         # self.scaling = scaling
         if pen_idxs is None:
-            self.pen_idxs = np.ones_like(signs)
+            self.pen_idxs = np.ones_like(signs, dtype=bool)
         else:
+            assert pen_idxs.dtype == bool
             self.pen_idxs = pen_idxs
         self.lmda=lmda
 
         # self.scaling = np.sqrt(np.diag(signs[:,None] * quad_form * signs))
         self.scaling = np.sqrt(np.diag(quad_form))
 
+        if barrier_type=="log":
+            self.barrier = LogBarrier(
+                con_linear=self.signs / self.scaling, 
+                pen_idxs=pen_idxs,
+                lmda=lmda,
+            )
+        elif barrier_type=="invlog":
+            self.barrier = InvLogBarrier(
+                con_linear=self.signs / self.scaling, 
+                pen_idxs=pen_idxs,
+                lmda=lmda,
+            )
+
     
-    @abstractmethod
-    def get_barrier_hess(self, z):
-        return self.lmda / z**2
+    # @abstractmethod
+    # def get_barrier_hess(self, z):
+    #     return self.lmda / z**2
 
 
     @abstractmethod
     def _get_hessinv(self, z):
         self.hess = self.H
-        self.hess[np.diag_indices_from(self.hess)] += self.get_barrier_hess(z)#self.lmda / z**2
+        # self.hess[np.diag_indices_from(self.hess)] += self.get_barrier_hess(z)#self.lmda / z**2
+        self.hess[np.diag_indices_from(self.hess)] += self.barrier.get_hess_diag(z)#self.lmda / z**2
         # self.H_inv = np.linalg.inv(self.hess)
         def solve_matvec(x):
             return np.linalg.solve(self.hess, x)
@@ -58,12 +77,14 @@ class NMOptimizer(Optimizer):
 
     @abstractmethod
     def _get_obj(self, z):
-        return .5*z.dot(self.H @ z) + self.v.dot(z) - self.lmda * np.log((self.signs * z) / self.scaling).sum()
+        # return .5*z.dot(self.H @ z) + self.v.dot(z) - self.lmda * np.log((self.signs * z) / self.scaling).sum()
+        return .5*z.dot(self.H @ z) + self.v.dot(z) + self.barrier.get_value(z)
 
 
     @abstractmethod
     def _get_grad(self, z):
-        return self.H @ z + self.v - self.lmda / z
+        # return self.H @ z + self.v - self.lmda / z
+        return self.H @ z + self.v + self.barrier.get_grad(z) 
 
 
     def optimize(
@@ -72,12 +93,14 @@ class NMOptimizer(Optimizer):
         c=.5,
         tau=.5,
         tol=1e-8,
+        ls_max_iters=1000,
     ):
         return self._optimize(
             max_steps=max_steps,
             c=c,
             tau=tau,
             tol=tol,
+            ls_max_iters=ls_max_iters,
         )
 
 
@@ -87,7 +110,7 @@ class NMOptimizer(Optimizer):
         c=.5,
         tau=.5,
         tol=1e-8,
-        ls_max_iters=100,
+        ls_max_iters=1000,
     ):
         z_new = self.signs / self.scaling 
         grad_new = self._get_grad(z_new)
