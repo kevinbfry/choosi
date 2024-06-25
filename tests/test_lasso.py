@@ -1,14 +1,19 @@
+import os
+import pytest
 import numpy as np
 import pandas as pd
 from selectinf.algorithms.barrier_affine import solve_barrier_affine_py
 from selectinf.randomized.snp_lasso import split_lasso_solved, selected_targets
 from selectinf.randomized.lasso import split_lasso
-# from selectinf.base import selected_targets
+import adelie as ad
+import pgenlib as pg
 from choosi.lasso import SplitLasso
 
-def test_lasso():
-    n = 100
-    p = 30
+@pytest.mark.parametrize("n, p", [
+    [100, 30],
+    # [200, 100],
+])
+def test_lasso_null(n, p):
     X_tr = np.asfortranarray(np.random.randn(n,p))
     X_val = np.asfortranarray(np.random.randn(n,p))
     X_ts = np.asfortranarray(np.random.randn(n,p))
@@ -28,6 +33,7 @@ def test_lasso():
         y_val=y_val,
         y_ts=y_ts,
         fit_intercept=True,
+        lmda_choice="mid",
         penalty=np.ones(p),
         family="gaussian",
     )
@@ -38,69 +44,224 @@ def test_lasso():
     L = sel_MLE - 1.96 * sel_MLE_std
     U = sel_MLE + 1.96 * sel_MLE_std
 
-    # print(pd.DataFrame({'std': sel_MLE_std, 'lower': L, 'MLE': sel_MLE, 'upper': U}))
-    # print(np.mean((L <= 0) & (0 <= U)))
-
-    # assert np.mean((L <= 0) & (0 <= U)) - .95 > -.05
-    # assert 0==1
-
-    si_sl_selfsolve = split_lasso.gaussian(
+    si_sl = split_lasso_solved.gaussian(
         np.hstack((np.ones((3*n,1)),X_full)), 
         y_full, 
         feature_weights=np.concatenate((np.zeros(1), np.ones(p) * sl.lmda*3*n)), 
-        # feature_weights=np.ones(p) * sl.lmda*3*n, 
         proportion=1./3, 
     )
-    si_sl_selfsolve.fit(
+    si_sl.fit(
+        observed_soln=sl.observed_soln, 
+        observed_subgrad=sl.observed_subgrad * 3 * n,
         perturb=np.concatenate((np.ones(n), np.zeros(2*n))).astype(bool),
     )
-    si_sl_selfsolve.setup_inference(dispersion=1)
-    TS = selected_targets(si_sl_selfsolve.loglike, si_sl_selfsolve.observed_soln, dispersion=1)
-    out = si_sl_selfsolve.inference(target_spec=TS, method='selective_MLE')
-
-    # si_sl = split_lasso_solved.gaussian(
-    #     np.hstack((np.ones((3*n,1)),X_full)), 
-    #     y_full, 
-    #     feature_weights=np.concatenate((np.zeros(1), np.ones(p) * sl.lmda*3*n)), 
-    #     # feature_weights=np.ones(p) * sl.lmda*3*n, 
-    #     proportion=1./3,
-    # )
-    # si_sl.fit(
-    #     observed_soln=sl.observed_soln, 
-    #     observed_subgrad=sl.observed_subgrad,
-    #     perturb=np.concatenate((np.ones(n), np.zeros(2*n))).astype(bool),
-    # )
-    # si_sl.setup_inference(dispersion=1)
-
-    # np.allclose(sl.observed_soln, si_sl_selfsolve.observed_soln)
-
-    # print(sl.cond_mean)
-    # print(si_sl.cond_mean) 
-    # print(np.diag(sl.cond_prec))
-    # print(np.diag(np.linalg.inv(si_sl_selfsolve.cond_cov)))
-    # assert np.allclose(np.sort(np.fabs(sl.cond_mean)), np.sort(np.fabs(si_sl_selfsolve.cond_mean)))
-    # assert np.allclose(np.sort(np.fabs(sl.cond_mean)), np.sort(np.fabs(si_sl.cond_mean)))
-    # assert np.allclose(np.diag(sl.cond_prec[1:,:][:,1:]), np.diag(np.linalg.inv(si_sl_selfsolve.cond_cov)[:-1,:][:,:-1]))
-    # assert np.allclose(np.fabs(sl.cond_prec[1:,:][:,1:]), np.fabs(np.linalg.inv(si_sl_selfsolve.cond_cov)[:-1,:][:,:-1]))
-
-    x_opt = sl.optimizer.optimize(max_steps=100, tau=.5, c=.5, tol=1e-10, ls_max_iters=1000)
-
-    si_val, si_x, si_hess = solve_barrier_affine_py(sl.cond_prec @ sl.cond_mean, sl.cond_prec, -sl.signs, -np.diag(sl.signs)[1:,:], np.zeros_like(sl.signs)[1:])
-
-    # assert np.allclose(x_opt, si_x)
-
-    # assert np.allclose(np.sort(np.fabs(sel_MLE)), np.sort(np.fabs(out['MLE'])))
-    ## o_1^* do not match, but we are computing sel_MLE the same way...
-    # print(out)
-
-    # print(pd.DataFrame({'std': sel_MLE_std, 'lower': L, 'MLE': sel_MLE, 'upper': U}))
-    # print(np.mean((L <= 0) & (0 <= U)), np.mean((out['MLE'] - 1.96* out['SE'] <= 0) & (0 <= out['MLE'] + 1.96*out['SE'])))
+    si_sl.setup_inference(dispersion=1)
+    TS = selected_targets(si_sl.loglike, si_sl.observed_soln, dispersion=1)
+    out = si_sl.inference(target_spec=TS, method='selective_MLE')
+    
     assert np.allclose(np.mean((L <= 0) & (0 <= U)), np.mean((out['MLE'] - 1.96* out['SE'] <= 0) & (0 <= out['MLE'] + 1.96*out['SE'])))
-    # assert np.allclose(sel_MLE, out['MLE'])
-    # assert np.allclose(sel_MLE_std, out['SE']) 
-    # assert 0==1
 
 
+@pytest.mark.parametrize("n, p", [
+    [100, 30],
+    # [200, 100],
+])
+def test_lasso_alt(n, p):
+    X_tr = np.asfortranarray(np.random.randn(n,p))
+    X_val = np.asfortranarray(np.random.randn(n,p))
+    X_ts = np.asfortranarray(np.random.randn(n,p))
+    X_full = np.asfortranarray(np.vstack((X_tr, X_val, X_ts)))
+    beta = np.random.choice([-1,1],size=p+1,replace=True) * np.random.uniform(3,5,size=p+1)
+    # beta[0] = np.fabs(beta[0])
+    y_tr = X_tr @ beta[1:] + beta[0] + np.random.randn(n)
+    y_val = X_val @ beta[1:] + beta[0] + np.random.randn(n)
+    y_ts = X_ts @ beta[1:] + beta[0] + np.random.randn(n)
+    y_full = np.asfortranarray(np.concatenate((y_tr, y_val, y_ts)))
+
+    sl = SplitLasso(
+        X_full=X_full,
+        X_tr=X_tr,
+        X_val=X_val,
+        X_ts=X_ts,
+        y_full=y_full,
+        y_tr=y_tr,
+        y_val=y_val,
+        y_ts=y_ts,
+        fit_intercept=True,
+        lmda_choice="mid",
+        penalty=np.ones(p),
+        family="gaussian",
+    )
+
+    sl.fit()
+    sl.extract_event()
+    sel_MLE, sel_MLE_std = sl.infer()
+    L = sel_MLE - 1.96 * sel_MLE_std
+    U = sel_MLE + 1.96 * sel_MLE_std
+    
+    si_sl = split_lasso_solved.gaussian(
+        np.hstack((np.ones((3*n,1)),X_full)), 
+        y_full, 
+        feature_weights=np.concatenate((np.zeros(1), np.ones(p) * sl.lmda*3*n)), 
+        proportion=1./3,
+    )
+    si_sl.fit(
+        observed_soln=sl.observed_soln, 
+        observed_subgrad=sl.observed_subgrad * 3 * n,
+        perturb=np.concatenate((np.ones(n), np.zeros(2*n))).astype(bool),
+    )
+    si_sl.setup_inference(dispersion=1)
+    TS = selected_targets(si_sl.loglike, si_sl.observed_soln, dispersion=1)
+    out = si_sl.inference(target_spec=TS, method='selective_MLE')
+
+    assert np.allclose(
+        np.mean((L <= beta[sl.overall]) & (beta[sl.overall] <= U)), 
+        np.mean((out['MLE'] - 1.96* out['SE'] <= beta[sl.overall]) & (beta[sl.overall] <= out['MLE'] + 1.96*out['SE']))
+    )
 
 
+@pytest.mark.parametrize("n, p", [
+    [100, 30],
+    # [200, 100],
+])
+def test_lasso_snp(n, p):
 
+    ## from JamesYang007/adelie GWAS user guide
+    data_dir = "./data/"
+    bedname = os.path.join(data_dir, "EUR_subset.bed")
+    bimname = os.path.join(data_dir, "EUR_subset.bim")
+    famname = os.path.join(data_dir, "EUR_subset.fam")
+
+    df_fam = pd.read_csv(
+        famname,
+        sep=" ",
+        header=None,
+        names=["FID", "IID", "Father", "Mother", "Sex", "Phenotype"],
+    )
+    n_samples = df_fam.shape[0]
+
+    df_bim = pd.read_csv(
+        bimname,
+        sep="\t",
+        header=None,
+        names=["chr", "variant", "pos", "base", "a1", "a2"],
+    )
+    n_snps = df_bim.shape[0]
+
+    # create bed reader
+    reader = pg.PgenReader(
+        str.encode(bedname),
+        raw_sample_ct=n_samples,
+    )
+
+    # get 0-indexed indices for current chromosome
+    df_bim_chr = df_bim[df_bim["chr"] == 17]
+    variant_idxs = df_bim_chr.index.to_numpy().astype(np.uint32)
+
+    # read the SNP matrix
+    geno_out_chr = np.empty((variant_idxs.shape[0], n_samples), dtype=np.int8)
+    reader.read_list(variant_idxs, geno_out_chr)
+
+    # convert to sample-major
+    geno_out_chr = np.asfortranarray(geno_out_chr.T)
+
+    # define cache directory and snpdat filename
+    cache_dir = "/tmp"
+    snpdat_name = os.path.join(cache_dir, "EUR_subset_chr17.snpdat")
+
+    # create handler to convert the SNP matrix to .snpdat
+    handler = ad.io.snp_unphased(snpdat_name)
+    _ = handler.write(geno_out_chr)
+
+    chromosomes = df_bim["chr"].unique()
+
+    # create bed reader
+    reader = pg.PgenReader(
+        str.encode(bedname),
+        raw_sample_ct=n_samples,
+    )
+
+    for chr in chromosomes:
+        # get 0-indexed indices for current chromosome
+        df_bim_chr = df_bim[df_bim["chr"] == chr]
+        variant_idxs = df_bim_chr.index.to_numpy().astype(np.uint32)
+
+        # read the SNP matrix
+        geno_out = np.empty((variant_idxs.shape[0], n_samples), dtype=np.int8)
+        reader.read_list(variant_idxs, geno_out)
+
+        # define snpdat filename
+        snpdat_name = os.path.join(cache_dir, f"EUR_subset_chr{chr}.snpdat")
+
+        # create handler to convert the SNP matrix to .snpdat
+        handler = ad.io.snp_unphased(snpdat_name)
+        _ = handler.write(geno_out_chr)
+
+    df = pd.read_csv(os.path.join(data_dir, "master_phe.csv"), sep="\t", index_col=0)
+    covars_dense = df.iloc[:, :-1].to_numpy()
+    y_full = df.iloc[:, -1].to_numpy()
+    y_tr = y_full[:len(y_full)//3]
+    y_val = y_full[len(y_full)//3:2*len(y_full)//3]
+    y_ts = y_full[2*len(y_full)//3:]
+
+    X_full = ad.matrix.concatenate(
+        [ad.matrix.dense(covars_dense)]
+        + [
+            ad.matrix.snp_unphased(
+                ad.io.snp_unphased(
+                    os.path.join(cache_dir, f"EUR_subset_chr{chr}.snpdat"),
+                )
+            )
+            for chr in chromosomes
+        ],
+        axis=1,
+    )
+    X_tr = X_full[:len(y_full)//3,:]
+    X_val = X_full[len(y_full)//3:2*len(y_full)//3,:]
+    X_ts = X_full[2*len(y_full)//3:,:]
+
+    penalty = np.concatenate([
+        np.zeros(covars_dense.shape[-1]),
+        np.ones(X_full.shape[-1] - covars_dense.shape[-1]),
+    ])
+
+    sl = SplitLasso(
+        X_full=X_full,
+        X_tr=X_tr,
+        X_val=X_val,
+        X_ts=X_ts,
+        y_full=y_full,
+        y_tr=y_tr,
+        y_val=y_val,
+        y_ts=y_ts,
+        fit_intercept=False,
+        lmda_choice="mid",
+        penalty=penalty,
+        family="gaussian",
+    )
+
+    sl.fit()
+    sl.extract_event()
+    sel_MLE, sel_MLE_std = sl.infer()
+    L = sel_MLE - 1.96 * sel_MLE_std
+    U = sel_MLE + 1.96 * sel_MLE_std
+    
+    si_sl = split_lasso_solved.gaussian(
+        np.hstack((np.ones((3*n,1)),X_full)), 
+        y_full, 
+        feature_weights=np.concatenate((np.zeros(1), np.ones(p) * sl.lmda*3*n)), 
+        proportion=1./3,
+    )
+    si_sl.fit(
+        observed_soln=sl.observed_soln, 
+        observed_subgrad=sl.observed_subgrad * 3 * n,
+        perturb=np.concatenate((np.ones(n), np.zeros(2*n))).astype(bool),
+    )
+    si_sl.setup_inference(dispersion=1)
+    TS = selected_targets(si_sl.loglike, si_sl.observed_soln, dispersion=1)
+    out = si_sl.inference(target_spec=TS, method='selective_MLE')
+
+    assert np.allclose(
+        np.mean((L <= beta[sl.overall]) & (beta[sl.overall] <= U)), 
+        np.mean((out['MLE'] - 1.96* out['SE'] <= beta[sl.overall]) & (beta[sl.overall] <= out['MLE'] + 1.96*out['SE']))
+    )

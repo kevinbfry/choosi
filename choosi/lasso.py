@@ -26,6 +26,7 @@ class SplitLasso(Choosir):
         y_ts,
         penalty,
         family,
+        lmda_choice=None,
         fit_intercept=True,
         n_threads=None,
     ):
@@ -38,6 +39,8 @@ class SplitLasso(Choosir):
         self.y_tr=y_tr   
         self.y_val=y_val 
         self.y_ts=y_ts
+
+        self.lmda_choice = lmda_choice
         
         self.pi = len(self.y_tr) / len(self.y_full)
 
@@ -67,41 +70,94 @@ class SplitLasso(Choosir):
         prev_val_obj = np.inf
         self.observed_beta = None
         self.observed_intercept = None
-        self.lmda = 0
 
-        def val_exit_cond(state):
-            if state.betas.shape[0] < 2:
-                return False
+        ## TODO: right now if lmda is None just picks 50th lmda in path. Makes testing easy
+        ## Really should do opposite. If lmda is None, should dynamically choose. Else it is provided,
+        ## and so should make path with lmda as endpt and fit full path.
+        if self.lmda_choice is None:
+            lmda_path = None
+            def val_exit_cond(state):
+                if state.betas.shape[0] < 2:
+                    return False
 
-            nonlocal prev_val_obj
-            
-            self.observed_beta = state.betas[-1]
-            if self.fit_intercept:
-                self.observed_intercept = state.intercepts[-1:]
-            else:
-                self.observed_intercept = np.zeros((1))
-            # self.lmda = state.lmdas[-1]
-            if self.lmda == 50:
+                nonlocal prev_val_obj
+                
+                self.observed_beta = state.betas[-1]
+                if self.fit_intercept:
+                    self.observed_intercept = state.intercepts[-1:]
+                else:
+                    self.observed_intercept = np.zeros((1))
+
                 self.lmda = state.lmdas[-1]
-                return True
-            self.lmda += 1
-            return False
 
-            ## TODO: change to Rsq
-            val_obj = ad.diagnostic.objective(
-                X=self.X_val,
-                glm=ad.glm.gaussian(y=self.y_val),
-                penalty=self.penalty,
-                n_threads=self.n_threads,
-                intercepts=state.intercepts[-1:],
-                betas=state.betas[-1:],
-                lmdas=state.lmdas[-1:],
-                add_penalty=False,
-            )[0]
-            if prev_val_obj < val_obj:
-                return True
-            else:
-                prev_val_obj = val_obj
+                ## TODO: change to Rsq
+                val_obj = ad.diagnostic.objective(
+                    X=self.X_val,
+                    glm=ad.glm.gaussian(y=self.y_val),
+                    penalty=self.penalty,
+                    n_threads=self.n_threads,
+                    intercepts=state.intercepts[-1:],
+                    betas=state.betas[-1:],
+                    lmdas=state.lmdas[-1:],
+                    add_penalty=False,
+                )[0]
+                if prev_val_obj < val_obj:
+                    return True
+                else:
+                    prev_val_obj = val_obj
+                    return Fals
+            
+        elif isinstance(self.lmda_choice, (int, float)):
+            self.lmda = self.lmda_choice
+
+            tmp_state = ad.solver.grpnet(
+                X=ad_X,
+                glm=glm,
+                adev_tol=.8,
+                early_exit=False,
+                intercept=self.fit_intercept,
+            )
+            lmda_path = tmp_state.lmda_path
+            lmda_path = np.concatenate((lmda_path[lmda_path > self.lmda], [self.lmda]))
+
+            def val_exit_cond(state):
+                if state.betas.shape[0] < 2:
+                    return False
+
+                nonlocal prev_val_obj
+                
+                self.observed_beta = state.betas[-1]
+                if self.fit_intercept:
+                    self.observed_intercept = state.intercepts[-1:]
+                else:
+                    self.observed_intercept = np.zeros((1))
+                return False
+            
+        elif self.lmda_choice == "mid":
+            # self.lmda = self.lmda_choice
+
+            tmp_state = ad.solver.grpnet(
+                X=ad_X,
+                glm=glm,
+                adev_tol=.8,
+                early_exit=False,
+                intercept=self.fit_intercept,
+            )
+            lmda_path = tmp_state.lmda_path
+            lmda_path = lmda_path[:len(lmda_path)//2]
+            self.lmda = lmda_path[-1]
+
+            def val_exit_cond(state):
+                if state.betas.shape[0] < 2:
+                    return False
+
+                nonlocal prev_val_obj
+                
+                self.observed_beta = state.betas[-1]
+                if self.fit_intercept:
+                    self.observed_intercept = state.intercepts[-1:]
+                else:
+                    self.observed_intercept = np.zeros((1))
                 return False
 
         state = ad.solver.grpnet(
@@ -109,6 +165,7 @@ class SplitLasso(Choosir):
             glm=glm,
             adev_tol=.8,
             early_exit=False,
+            lmda_path=lmda_path,
             intercept=self.fit_intercept,
             exit_cond=val_exit_cond,
         )
