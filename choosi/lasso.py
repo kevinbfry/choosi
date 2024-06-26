@@ -3,6 +3,7 @@ import numpy as np
 import adelie as ad
 from .optimizer import CQNMOptimizer
 from .choosir import Choosir
+from .choosi_core.matrix import hessian
 
 INF_METHODS = ["MLE"]
 
@@ -19,30 +20,30 @@ class SplitLasso(Choosir):
         X_full, 
         X_tr, 
         X_val, 
-        X_ts,
         y_full,
         y_tr, 
         y_val, 
-        y_ts,
         penalty,
         family,
         lmda_choice=None,
         fit_intercept=True,
         n_threads=None,
     ):
+        self._check_X(X_full, X_tr, X_val)
         self.X_full=X_full
         self.X_tr=X_tr 
         self.X_val=X_val 
-        self.X_ts=X_ts
 
         self.y_full=y_full
         self.y_tr=y_tr   
         self.y_val=y_val 
-        self.y_ts=y_ts
 
         self.lmda_choice = lmda_choice
         
-        self.pi = len(self.y_tr) / len(self.y_full)
+        self.n_full = len(self.y_full)
+        self.n_tr = len(self.y_tr)
+
+        self.pi = self.n_tr / self.n_full
 
         exec(f"self.glm_full = ad.glm.{family}(self.y_full)")
         exec(f"self.glm_tr = ad.glm.{family}(self.y_tr)")
@@ -57,12 +58,30 @@ class SplitLasso(Choosir):
         self.n_threads=os.cpu_count() // 2 if n_threads is None else n_threads
 
 
+    def _check_X(
+        self,
+        X_full,
+        X_tr,
+        X_val,
+    ):
+        if (
+            not isinstance(X_full, np.ndarray) or 
+            not isinstance(X_tr, np.ndarray) or 
+            not isinstance(X_val, np.ndarray)
+        ):
+            raise TypeError("X matrices must be numpy arrays")
+        
+        return
+
+
     def fit(self):
         X = self.X_tr
         y = self.y_tr
 
-        if not isinstance(X, ad.matrix.MatrixNaiveBase64):
-            ad_X = ad.matrix.dense(X)
+        # if not isinstance(X, ad.matrix.MatrixNaiveBase64):
+        #     ad_X = ad.matrix.dense(X)
+        # else:
+        #     ad_X = X
         
         # self.glm = glm = ad.glm.gaussian(y) ## TODO: rn just gaussian
         glm = self.glm_tr
@@ -105,13 +124,13 @@ class SplitLasso(Choosir):
                     return True
                 else:
                     prev_val_obj = val_obj
-                    return Fals
+                    return False
             
         elif isinstance(self.lmda_choice, (int, float)):
             self.lmda = self.lmda_choice
 
             tmp_state = ad.solver.grpnet(
-                X=ad_X,
+                X=self.X_tr,
                 glm=glm,
                 adev_tol=.8,
                 early_exit=False,
@@ -137,7 +156,7 @@ class SplitLasso(Choosir):
             # self.lmda = self.lmda_choice
 
             tmp_state = ad.solver.grpnet(
-                X=ad_X,
+                X=self.X_tr,
                 glm=glm,
                 adev_tol=.8,
                 early_exit=False,
@@ -161,7 +180,7 @@ class SplitLasso(Choosir):
                 return False
 
         state = ad.solver.grpnet(
-            X=ad_X,
+            X=self.X_tr,
             glm=glm,
             adev_tol=.8,
             early_exit=False,
@@ -209,15 +228,18 @@ class SplitLasso(Choosir):
 
 
     def extract_event(self):
-        if not isinstance(self.X_full, ad.matrix.MatrixNaiveBase64):
-            ad_X_full = ad.matrix.dense(self.X_full)
-            ad_X = ad.matrix.dense(self.X_tr)
-        else:
-            ad_X_full = self.X_full
-            ad_X = self.X_tr
+        # if not isinstance(self.X_full, ad.matrix.MatrixNaiveBase64):
+        #     self.X_isnumpy = True
+        #     ad_X_full = ad.matrix.dense(self.X_full)
+        #     ad_X = ad.matrix.dense(self.X_tr)
+        # else:
+        #     self.X_isnumpy = False
+        #     ad_X_full = self.X_full
+        #     ad_X = self.X_tr
 
         self.unpen = (self.penalty == 0)
         self.overall = (self.observed_soln != 0)
+        self.p_sel = self.overall.sum()
         self.n_opt_var = self.overall.sum()
         self.active = ~self.unpen & self.overall
         self.active_signs = self.observed_soln[self.active]
@@ -234,7 +256,7 @@ class SplitLasso(Choosir):
         self.signs = self.signs[self.overall]
 
         etas = ad.diagnostic.predict(
-            X=ad_X,
+            X=self.X_tr,
             betas=self.observed_beta,
             intercepts=self.observed_intercept,
         )
@@ -244,7 +266,7 @@ class SplitLasso(Choosir):
             etas=etas,
         )
         observed_subgrad = ad.diagnostic.gradients(
-            X=ad_X,
+            X=self.X_tr,
             resids=resids,
             n_threads=self.n_threads,
         )[0]
@@ -265,20 +287,23 @@ class SplitLasso(Choosir):
         self.con_offset = np.zeros(self.n_opt_var)
 
 
-        self.beta_unpen = self._selected_estimator(ad_X_full, self.glm_full)
+        self.beta_unpen = self._selected_estimator(self.X_full, self.glm_full)
 
         ## opt conditional mean, prec
         self.alpha = (1 - self.pi) / self.pi
-        if self.fit_intercept:
-            # X_E = np.hstack((np.ones((self.X_tr.shape[0],1)), self.X_tr))[:, self.overall]#[:, self.active]
-            X_E = np.hstack((np.ones((self.X_full.shape[0],1)), self.X_full))[:, self.overall]#[:, self.active]
-        else:
-            # X_E = self.X_tr[:, self.overall]#[:, self.active]
-            X_E = self.X_full[:, self.overall]#[:, self.active]
-        # self.H_E = X_E.T @ X_E / len(self.y_tr)
-        self.H_E = X_E.T @ X_E / len(self.y_full)
+        self.H_E = self._compute_hessian()
 
         return self
+
+
+    def _compute_hessian(self):
+        if self.fit_intercept:
+            X_E = np.hstack((np.ones((self.X_full.shape[0],1)), self.X_full))[:, self.overall]
+        else:
+            X_E = self.X_full[:, self.overall]
+
+        return X_E.T @ X_E / len(self.y_full)
+
 
     def infer(self, method="MLE"):
         if method not in INF_METHODS:
@@ -287,9 +312,13 @@ class SplitLasso(Choosir):
 
         H_E = self.H_E
         alpha = self.alpha
-        self.H_E_inv = H_E_inv = np.linalg.inv(H_E)
-        self.cond_cov = cond_cov = H_E_inv / len(self.y_full)
-        self.cond_prec = cond_prec = H_E * len(self.y_full) / alpha ## need to undo division by n ## needs to scale by (1 - pi) / pi
+        try:
+            self.H_E_inv = H_E_inv = np.linalg.inv(H_E)
+        except:
+            H_E[np.diag_indices_from(H_E)] += 1e-12
+            self.H_E_inv = H_E_inv = np.linalg.inv(H_E)
+        self.cond_cov = cond_cov = H_E_inv / self.n_full
+        self.cond_prec = cond_prec = H_E * self.n_full / alpha ## need to undo division by n ## needs to scale by (1 - pi) / pi
         self.cond_mean = cond_mean = self.beta_unpen - H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs) ## \bar\beta_E - \lambda(X_E.T X_E)^{-1}z_E
 
         ## call optimizer
@@ -311,6 +340,76 @@ class SplitLasso(Choosir):
         sel_MLE_std = np.sqrt(np.diag((1 + 1./alpha) * cond_cov - np.linalg.inv(hess_barrier) / alpha**2))
 
         return (sel_MLE, sel_MLE_std)
+
+
+
+class SplitLassoSNPUnphased(SplitLasso):
+    def __init__(
+        self,
+        X_full_fnames,
+        X_tr_fnames,
+        X_val_fnames,
+        y_full,
+        y_tr,
+        y_val,
+        penalty,
+        family,
+        lmda_choice=None,
+        fit_intercept=True,
+        n_threads=None,
+    ):
+        self.X_full_fnames = [os.path.join(fname) for fname in X_full_fnames]
+        self.X_tr_fnames = [os.path.join(fname) for fname in X_tr_fnames]
+        self.X_val_fnames = [os.path.join(fname) for fname in X_val_fnames]
+
+        self.X_full_handlers = [ad.io.snp_unphased(fname) for fname in self.X_full_fnames]
+        self.X_tr_handlers = [ad.io.snp_unphased(fname) for fname in self.X_tr_fnames]
+        self.X_val_handlers = [ad.io.snp_unphased(fname) for fname in self.X_val_fnames]
+
+        self.X_full = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_full_handlers], axis=1)
+        self.X_tr = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_tr_handlers], axis=1)
+        self.X_val = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_val_handlers], axis=1)
+
+        self.y_full = y_full
+        self.y_tr = y_tr
+        self.y_val = y_val
+
+        self.lmda_choice = lmda_choice
+
+        self.n_full = len(self.y_full)
+        self.n_tr = len(self.y_tr)
+
+        self.pi = self.n_tr / self.n_full
+
+        exec(f"self.glm_full = ad.glm.{family}(self.y_full)")
+        exec(f"self.glm_tr = ad.glm.{family}(self.y_tr)")
+
+        if fit_intercept:
+            self.penalty=np.concatenate(([0],penalty)) ## TODO: add unpenalized indices optionality
+        else:
+            self.penalty = np.array(penalty)
+
+        self.fit_intercept = fit_intercept
+
+        self.n_threads=os.cpu_count() // 2 if n_threads is None else n_threads
+
+
+    def _compute_hessian(self):
+        E = self.p_sel - self.fit_intercept
+        subset = np.where(self.overall[1:])[0] if self.fit_intercept else np.where(self.overall)[0]
+        H_E = np.zeros((E, E))
+        hessian(self.X_full_handlers, subset, np.ones(self.n_full)/self.n_full, H_E, self.n_threads)
+        if self.fit_intercept:
+            int_col = np.zeros((1,E))
+            for i in range(len(subset)):
+                int_col[:,i] = self.X_full.cmul(subset[i], np.ones(self.n_full), np.ones(self.n_full) / self.n_full)
+            H_E = np.hstack((int_col.T, H_E))
+            H_E = np.vstack((np.hstack(([[1]],int_col)), H_E))
+        return H_E
+
+
+    
+
 
 
         
