@@ -19,7 +19,7 @@ class SplitLasso(Choosir):
         self, 
         X, 
         y,
-        tr_idx, ## TODO: just pass in tr, val, idxs
+        tr_idx, 
         val_idx, 
         penalty,
         family,
@@ -79,6 +79,9 @@ class SplitLasso(Choosir):
 
         if not isinstance(y, np.ndarray) or y.squeeze().ndim != 1:
             raise TypeError("y must be a 1D numpy array")
+
+        if y.squeeze().shape[0] != X.squeeze().shape[0]:
+            raise ValueError("X and y must have same number of rows")
 
         return X.squeeze(), y.squeeze()
 
@@ -420,85 +423,60 @@ class SplitLasso(Choosir):
 
 
 class SplitLassoSNPUnphased(SplitLasso):
+    def _compute_dispersion(self):
+        return super()._compute_dispersion()
+
     def __init__(
         self,
         X_fnames,
         y,
+        tr_idx, 
+        val_idx,
         penalty,
         family,
-        X_tr_fnames=None,
+        X_tr_fnames=None, ## NOTE: passing in tr, val fnames may be faster than just idxs
         X_val_fnames=None,
-        y_tr=None,
-        y_val=None,
-        tr_idx=None, ## NOTE: passing in tr_idx, val_idx, may be slower than fnames
-        val_idx=None,
         lmda_choice=None,
         fit_intercept=True,
         n_threads=None,
     ):
 
-        self.X_full_fnames = [os.path.join(fname) for fname in X_fnames]
-        self.X_full_handlers = [ad.io.snp_unphased(fname) for fname in self.X_full_fnames]
-        self.X_full = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_full_handlers], axis=1)
-        self.y_full = y
-        self.n_full = len(self.y_full)
+        super().__init__(
+            X=X_fnames,
+            y=y,
+            tr_idx=tr_idx,
+            val_idx=val_idx,
+            penalty=penalty,
+            family=family,
+            lmda_choice=lmda_choice,
+            fit_intercept=fit_intercept,
+            n_threads=n_threads,
+        )
 
-        if X_tr_fnames is None and X_val_fnames is None:
-            tr_idx, val_idx = self._check_idxs(tr_idx, val_idx)
-            self.tr_idx = tr_idx
-            self.val_idx = val_idx
-            self.ts_idx = ~(tr_idx | val_idx)
-
-        if X_tr_fnames is None:
-            self.X_tr_fnames = None
-            self.X_tr_handlers = None
-            self.X_tr = self.X_full[tr_idx,:]
-        else:
+        if X_tr_fnames is not None:
             self.X_tr_fnames = [os.path.join(fname) for fname in X_tr_fnames]
             self.X_tr_handlers = [ad.io.snp_unphased(fname) for fname in self.X_tr_fnames]
             self.X_tr = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_tr_handlers], axis=1)
 
-        if X_val_fnames is None:
-            self.X_val_fnames = None
-            self.X_val_handlers = None
-            self.X_val = self.X_full[val_idx,:]
-        else:
+        if X_val_fnames is not None:
             self.X_val_fnames = [os.path.join(fname) for fname in X_val_fnames]
             self.X_val_handlers = [ad.io.snp_unphased(fname) for fname in self.X_val_fnames]
             self.X_val = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_val_handlers], axis=1)
 
 
-        if y_tr is None:
-            self.y_tr = self.y_full[tr_idx]
-        else:
-            self.y_tr = y_tr
-        self.n_tr = len(self.y_tr)
+    def _check_Xy(self, X_fnames, y):
 
-        if y_val is None:
-            self.y_val = self.y_full[val_idx]
-        else:
-            self.y_val = y_val
+        if not isinstance(y, np.ndarray) or y.squeeze().ndim != 1:
+            raise TypeError("y must be a 1D numpy array")
 
-        self.y_ts = self.y_full[self.ts_idx]
-        self.n_ts = len(self.y_ts)
+        self.X_full_fnames = [os.path.join(fname) for fname in X_fnames]
+        self.X_full_handlers = [ad.io.snp_unphased(fname) for fname in self.X_full_fnames]
+        X = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_full_handlers], axis=1)
 
-        self.lmda_choice = lmda_choice
+        if y.squeeze().shape[0] != X.shape[0]:
+            raise ValueError("X and y must have same number of rows")
 
-        self.pi = self.n_tr / self.n_full
-
-        exec(f"self.glm_full = ad.glm.{family}(self.y_full)")
-        exec(f"self.glm_tr = ad.glm.{family}(self.y_tr)")
-        exec(f"self.glm_val = ad.glm.{family}(self.y_val)")
-        exec(f"self.glm_ts = ad.glm.{family}(self.y_ts)")
-
-        if fit_intercept:
-            self.penalty=np.concatenate(([0],penalty)) ## TODO: add unpenalized indices optionality
-        else:
-            self.penalty = np.array(penalty)
-
-        self.fit_intercept = fit_intercept
-
-        self.n_threads=os.cpu_count() // 2 if n_threads is None else n_threads
+        return X, y
 
 
     def _compute_hessian(self):
