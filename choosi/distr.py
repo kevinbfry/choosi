@@ -35,9 +35,16 @@ class WeightedNormal(object):
         if self._mu != mu:
             self._mu = mu
             sigma = self._sigma
-            unw_pmf = norm.pdf((self.grid - mu)/sigma)
-            self.pmf = unw_pmf * self.weights
-            self.pmf /= self.pmf.sum()
+            # unw_pmf = norm.pdf((self.grid - mu)/sigma)
+            # self.pmf = unw_pmf * self.weights
+            # self.pmf /= self.pmf.sum()
+
+            unw_log_pmf = norm.logpdf((self.grid - mu) / sigma)
+            self.log_pmf = unw_log_pmf + np.log(self.weights)
+            largest = self.log_pmf.max() - 10
+            c = largest + np.log(np.sum(np.exp(self.log_pmf - largest)))
+            self.pmf = np.exp(self.log_pmf - c)
+
             self.distr = rv_discrete(values=(self.grid, self.pmf))
 
     
@@ -63,11 +70,20 @@ class WeightedNormal(object):
         sigma = np.sqrt(((self.grid - mu)**2 * self.pmf).sum())
 
         lb = mu - 20 * sigma
+        ct = 0
         while self.cdf(lb, obs_val) < (1+level)/2:
-            lb -= 10*sigma
+            if ct == 10:
+                assert 0==1
+            lb -= 20*sigma
+            ct += 1
+
+        ct = 0
         ub = mu + 20 * sigma
         while self.cdf(ub, obs_val) > (1-level)/2:
-            ub += 10*sigma
+            if ct == 10:
+                assert 0==1
+            ub += 20*sigma
+            ct += 1
 
         U = root_scalar(
             lambda x: self.cdf(x, obs_val) - (1-level)/2, 

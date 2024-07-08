@@ -1,11 +1,15 @@
 import os
 import numpy as np
 import adelie as ad
+from scipy.optimize import root_scalar
+from scipy.stats import norm
+
+from .distr import WeightedNormal
 from .optimizer import CQNMOptimizer
 from .choosir import Choosir
 from .choosi_core.matrix import hessian
 
-INF_METHODS = ["MLE"]
+INF_METHODS = ["mle", "exact"]
 
 
 ## TODO
@@ -181,6 +185,7 @@ class SplitLasso(Choosir):
                 early_exit=False,
                 intercept=self.fit_intercept,
                 n_threads=self.n_threads,
+                progress_bar=False,
             )
             lmda_path = tmp_state.lmda_path
             lmda_path = np.concatenate((lmda_path[lmda_path > self.lmda], [self.lmda]))
@@ -206,6 +211,7 @@ class SplitLasso(Choosir):
                 early_exit=False,
                 intercept=self.fit_intercept,
                 n_threads=self.n_threads,
+                progress_bar=False,
             )
             lmda_path = tmp_state.lmda_path
             lmda_path = lmda_path[:len(lmda_path)//2]
@@ -233,6 +239,7 @@ class SplitLasso(Choosir):
             intercept=self.fit_intercept,
             exit_cond=val_exit_cond,
             n_threads=self.n_threads,
+            progress_bar=False,
         )
 
         # if len(lmda_path) == 1:
@@ -267,9 +274,9 @@ class SplitLasso(Choosir):
             glm=glm,
             penalty=penalty,
             lmda_path_size=1,
-            progress_bar=False,
             intercept=self.fit_intercept,
             n_threads=self.n_threads,
+            progress_bar=False,
         )
 
         beta = state.betas[0].toarray().flatten()[features]
@@ -334,11 +341,6 @@ class SplitLasso(Choosir):
         # self.glm_full.hessian(eta, grad, self.W)# includes 1/n
         self.glm_tr.hessian(eta, grad, self.W)# includes 1/n
 
-        ## constraints
-        self.con_linear = -np.eye(self.p_sel)
-        self.con_offset = np.zeros(self.p_sel)
-
-
         self.beta_unpen = self._selected_estimator(self.X_full, self.glm_full)
 
         ## opt conditional mean, prec
@@ -354,7 +356,7 @@ class SplitLasso(Choosir):
         else:
             self.X_E = X_E = self.X_full[:, self.overall]
 
-        H_E = X_E.T @ X_E / len(self.y_full)
+        H_E = X_E.T @ X_E / self.n_full
 
         try:
             H_E_inv = np.linalg.inv(H_E)
@@ -365,35 +367,169 @@ class SplitLasso(Choosir):
         return H_E, H_E_inv
     
 
-    ## SCRATCH THIS?? NOTE: assumes self._compute_hessian() called first
     def _compute_dispersion(self):
         # if not hasattr(self, "X_E"):
         #     raise AttributeError("'X_E' has not been computed. Usually due to not running extract_event() before infer()")
 
         X_ts = self.X_full[self.ts_idx,:]
 
+        beta = np.zeros_like(self.observed_soln)
+        beta[self.overall] = self.beta_unpen
+
         etas = ad.diagnostic.predict(
             X=X_ts,
-            betas=self.observed_beta,
-            intercepts=self.observed_intercept,
+            betas=beta[None,1:],
+            intercepts=beta[:1],
         )
         resids = ad.diagnostic.residuals(
             glm=self.glm_ts,
             etas=etas,
         ) ## is (y- Xb) / n_ts
 
-        return np.sum((self.n_ts*resids)**2)/ (self.n_ts - self.p_sel)
+        return np.sum((self.n_ts*resids)**2) / (self.n_ts - self.p_sel)
         
 
-    def infer(self, method="MLE", dispersion=None):
+    ## TODO: add level parameter
+    def infer(self, method="mle", dispersion=None, level=.95):
         if method not in INF_METHODS:
             raise ValueError("Inference only valid for 'method' in f{INF_METHODS}")
 
         if dispersion is None:
-            self.dispersion = dispersion = self._compute_dispersion()
+            self.dispersion = self._compute_dispersion()
         else:
             self.dispersion = dispersion
 
+        if method == "mle":
+            return self._infer_MLE()
+        elif method == "exact":
+            return self._infer_exact(level=level)
+        
+    
+    def _infer_exact(self, level):
+
+        ## constraints
+        # self.con_linear = -np.eye(self.p_sel)
+        # self.con_offset = np.zeros(self.p_sel)
+        self.con_linear = -np.diag(self.signs)[self.active[self.overall]]
+        self.con_offset = self.con_linear @ self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs) / self.n_full
+
+        ## compute unrandomized intervals
+        L, U = self._compute_unrand_trunc()
+
+        ## convolve with randomization noise
+        grids, weights = self._convolve_with_rand(L, U)
+
+        ## use convolution as weights in conditional distribution of \hat\beta \mid selection
+        cond_distrs = self._form_cond_distr(grids, weights)
+
+        ## 1D-root finding for each target
+        lower, upper = self._find_roots(cond_distrs, level) ## TODO: update with level parameter
+
+        return lower, upper
+        
+
+    def _convolve_with_rand(
+        self,
+        L,
+        U,
+        n_grid=4000,
+    ):
+        sigmas = np.sqrt(
+            np.diag(self.H_E_inv) * self.alpha * self.dispersion / self.n_full
+        )
+        opts = self.beta_unpen
+        weights = np.zeros((self.p_sel,n_grid))
+        grids = np.zeros((self.p_sel,n_grid))
+        for j in range(self.p_sel):
+            t = np.linspace(opts[j] - 10*sigmas[j]/self.alpha, opts[j] + 10*sigmas[j]/self.alpha, n_grid)
+            # t = np.linspace(- 10*sigmas[j], 10*sigmas[j], n_grid)
+            zu = (U[j] - t)/sigmas[j]
+            zl = (L[j] - t)/sigmas[j]
+
+            grids[j,:] = t
+            weights[j,:] = norm.cdf(zu) - norm.cdf(zl)
+            # weights[j,:] /= weights[j,:].sum()
+
+        return grids, weights
+    
+
+    def _form_cond_distr(
+        self,
+        grids,
+        weights,
+    ):
+        sigmas = np.sqrt(np.diag(self.H_E_inv) * self.dispersion / self.n_full)
+        return [
+            WeightedNormal(
+                mu=self.observed_soln[self.overall][i],
+                sigma=sigmas[i],
+                grid=grids[i,:],
+                weights=weights[i,:],
+            ) 
+            for i in range(weights.shape[0])
+        ]
+
+
+    def _find_roots(
+        self,
+        cond_distrs,
+        level,
+    ):
+        lower = np.zeros(self.p_sel)
+        upper = np.zeros(self.p_sel)
+        # sigmas = np.sqrt(
+        #     np.diag(self.H_E_inv) * self.alpha * self.dispersion / self.n_full
+        # )
+        # opts = self.observed_soln[self.overall]
+        opts = self.beta_unpen
+        for j in range(self.p_sel):
+            # sigma = sigmas[j]
+            cond_distr = cond_distrs[j]
+
+            lower[j], upper[j] = cond_distr.find_ci(opts[j], level)
+
+        ## JT does this, but why? get overcoverage with this, undercoverage w/o
+        # lower *= np.diag(self.H_E_inv) * self.dispersion / self.n_full
+        # lower += opts
+        # upper *= np.diag(self.H_E_inv) * self.dispersion / self.n_full
+        # upper += opts
+
+        return lower, upper
+
+
+    def _compute_unrand_trunc(
+        self
+    ):
+        A = self.con_linear ## don't think this is ever needed as matrix. should restructure to store as vector
+        b = self.con_offset
+
+        # cov = self.H_E_inv * (1 + self.alpha) * self.dispersion / self.n_full ## (X'X)^{-1}(1 + \alpha)
+        cov = self.H_E_inv * self.dispersion / self.n_full ## (X'X)^{-1}
+        # opt = self.observed_soln[self.overall]
+        opt = self.observed_soln[self.overall] - self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs) / self.n_full ## TODO: should this be observed_soln?
+
+        L = np.zeros(self.p_sel)
+        U = np.zeros(self.p_sel)
+        for j in range(self.p_sel):
+            ## regress target out of opt variables
+            gamma = cov[:,j] / cov[j,j]
+            nuis = opt - gamma * opt[j]
+            Agamma = A.dot(gamma)#A @ gamma ## TODO: should be able to do this as element-wise.
+            Anuis = A.dot(nuis)#A @ nuis
+            bmAnuis = b - Anuis
+
+            tol = 1.e-4 * np.fabs(Agamma).max()
+
+            L[j] = np.amax((bmAnuis / Agamma)[Agamma < -tol]) if (Agamma < -tol).sum() > 0 else -np.inf
+            U[j] = np.amin((bmAnuis / Agamma)[Agamma > tol]) if (Agamma > tol).sum() > 0 else np.inf
+
+            assert L[j] < U[j] ##TODO: sometimes this gets triggered...
+
+        return L, U
+
+
+    def _infer_MLE(self):
+        dispersion = self.dispersion
         H_E = self.H_E
         H_E_inv = self.H_E_inv
         alpha = self.alpha
@@ -412,11 +548,10 @@ class SplitLasso(Choosir):
 
         soln = optimizer.optimize()
         hess_barrier = cond_prec.copy()
-        # H_E_barrier[np.diag_indices_from(H_E_barrier)] += optimizer.get_barrier_hess(soln)
         hess_barrier[np.diag_indices_from(hess_barrier)] += optimizer.barrier.get_hess_diag(soln)
 
         sel_MLE = self.beta_unpen + (cond_mean - soln) / alpha
-        sel_MLE_std = np.sqrt(np.diag((1 + 1./alpha) * cond_cov - np.linalg.inv(hess_barrier) / alpha**2))# / np.sqrt(dispersion)
+        sel_MLE_std = np.sqrt(np.diag((1 + 1./alpha) * cond_cov - np.linalg.inv(hess_barrier) / alpha**2))
 
         return (sel_MLE, sel_MLE_std)
 
