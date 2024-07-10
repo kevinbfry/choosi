@@ -277,6 +277,7 @@ class SplitLasso(Choosir):
             intercept=self.fit_intercept,
             n_threads=self.n_threads,
             progress_bar=False,
+            tol=1e-12,
         )
 
         beta = state.betas[0].toarray().flatten()[features]
@@ -345,7 +346,7 @@ class SplitLasso(Choosir):
 
         ## opt conditional mean, prec
         self.alpha = (1 - self.pi) / self.pi
-        self.H_E, self.H_E_inv = self._compute_hessian()
+        self.H_E, self.H_E_tr, self.H_E_inv, self.H_E_tr_inv = self._compute_hessian()
 
         return self
 
@@ -364,7 +365,20 @@ class SplitLasso(Choosir):
             H_E[np.diag_indices_from(H_E)] += 1e-12 ## TODO: do this dynamically, add enough to get PDness
             H_E_inv = np.linalg.inv(H_E)
 
-        return H_E, H_E_inv
+        if self.fit_intercept:
+            self.X_E_tr = X_E_tr = np.hstack((np.ones((self.n_tr,1)), self.X_tr))[:, self.overall]
+        else:
+            self.X_E_tr = X_E_tr = self.X_tr[:, self.overall]
+
+        H_E_tr = X_E_tr.T @ X_E_tr / self.n_tr
+
+        try:
+            H_E_tr_inv = np.linalg.inv(H_E_tr)
+        except:
+            H_E_tr[np.diag_indices_from(H_E_tr)] += 1e-12 ## TODO: do this dynamically, add enough to get PDness
+            H_E_tr_inv = np.linalg.inv(H_E_tr)
+
+        return H_E, H_E_tr, H_E_inv, H_E_tr_inv
     
 
     def _compute_dispersion(self):
@@ -411,7 +425,7 @@ class SplitLasso(Choosir):
         # self.con_linear = -np.eye(self.p_sel)
         # self.con_offset = np.zeros(self.p_sel)
         self.con_linear = -np.diag(self.signs)[self.active[self.overall]]
-        self.con_offset = self.con_linear @ self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs) / self.n_full
+        self.con_offset = self.con_linear @ self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs)# / self.n_full
 
         ## compute unrandomized intervals
         L, U = self._compute_unrand_trunc()
@@ -506,7 +520,7 @@ class SplitLasso(Choosir):
         # cov = self.H_E_inv * (1 + self.alpha) * self.dispersion / self.n_full ## (X'X)^{-1}(1 + \alpha)
         cov = self.H_E_inv * self.dispersion / self.n_full ## (X'X)^{-1}
         # opt = self.observed_soln[self.overall]
-        opt = self.observed_soln[self.overall] - self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs) / self.n_full ## TODO: should this be observed_soln?
+        opt = self.observed_soln[self.overall] + self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs)# / self.n_full ## TODO: should this be observed_soln?
 
         L = np.zeros(self.p_sel)
         U = np.zeros(self.p_sel)
@@ -627,7 +641,18 @@ class SplitLassoSNPUnphased(SplitLasso):
             H_E = np.vstack((np.hstack(([[1]],int_col)), H_E))
 
         H_E_inv = np.linalg.inv(H_E)
-        return H_E, H_E_inv
+        
+        H_E_tr = np.zeros((E, E))
+        hessian(self.X_tr_handlers, subset, np.ones(self.n_tr)/self.n_tr, H_E_tr, self.n_threads)
+        if self.fit_intercept:
+            int_col = np.zeros((1,E))
+            for i in range(len(subset)):
+                int_col[:,i] = self.X_tr.cmul(subset[i], np.ones(self.n_tr), np.ones(self.n_tr) / self.n_tr)
+            H_E_tr = np.hstack((int_col.T, H_E_tr))
+            H_E_tr = np.vstack((np.hstack(([[1]],int_col)), H_E_tr))
+
+        H_E_tr_inv = np.linalg.inv(H_E_tr)
+        return H_E, H_E_tr, H_E_inv, H_E_tr_inv
 
 
     
