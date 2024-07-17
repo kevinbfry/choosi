@@ -346,6 +346,7 @@ class SplitLasso(Choosir):
     
 
     def _compute_dispersion(self):
+        ## TODO: add logic for when X_ts provided vs not
         X_ts = self.X_full[self.ts_idx,:]
 
         beta = np.zeros_like(self.observed_soln)
@@ -521,6 +522,7 @@ class SplitLassoSNPUnphased(SplitLasso):
     def _compute_dispersion(self):
         return super()._compute_dispersion()
 
+    ## TODO: add covs_ts, X_ts_fnames optional argument
     def __init__(
         self,
         X_fnames,
