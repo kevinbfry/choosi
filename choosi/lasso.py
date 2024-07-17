@@ -238,6 +238,8 @@ class SplitLasso(Choosir):
         )
         
         self.observed_beta = self.observed_beta.toarray()
+        if (self.observed_beta != 0).sum() == 0:
+            assert 0==1
         if self.fit_intercept:
             self.observed_soln = np.concatenate((
                 self.observed_intercept,
@@ -527,12 +529,19 @@ class SplitLassoSNPUnphased(SplitLasso):
         val_idx,
         penalty,
         family,
+        covs=None,
         X_tr_fnames=None, ## NOTE: passing in tr, val fnames may be faster than just idxs
+        covs_tr=None,
         X_val_fnames=None,
+        covs_val=None,
         lmda_choice=None,
         fit_intercept=True,
         n_threads=None,
     ):
+
+        self.covs = covs
+        self.covs_tr = covs_tr
+        self.covs_val = covs_val
 
         super().__init__(
             X=X_fnames,
@@ -550,11 +559,31 @@ class SplitLassoSNPUnphased(SplitLasso):
             self.X_tr_fnames = [os.path.join(fname) for fname in X_tr_fnames]
             self.X_tr_handlers = [ad.io.snp_unphased(fname) for fname in self.X_tr_fnames]
             self.X_tr = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_tr_handlers], axis=1)
+            if self.covs_tr is not None:
+                if not isinstance(self.covs, np.ndarray):
+                    raise TypeError("'covs_tr' must be an ndarray.")
+                self.X_tr = ad.matrix.concatenate(
+                    [
+                        ad.matrix.dense(self.covs_tr),
+                        self.X_tr,
+                    ],
+                    axis=0,
+                )
 
         if X_val_fnames is not None:
             self.X_val_fnames = [os.path.join(fname) for fname in X_val_fnames]
             self.X_val_handlers = [ad.io.snp_unphased(fname) for fname in self.X_val_fnames]
             self.X_val = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_val_handlers], axis=1)
+            if self.covs_val is not None:
+                if not isinstance(self.covs, np.ndarray):
+                    raise TypeError("'covs_val' must be an ndarray.")
+                self.X_val = ad.matrix.concatenate(
+                    [
+                        ad.matrix.dense(self.covs_val),
+                        self.X_val,
+                    ],
+                    axis=0,
+                )
 
 
     def _check_Xy(self, X_fnames, y):
@@ -565,6 +594,16 @@ class SplitLassoSNPUnphased(SplitLasso):
         self.X_full_fnames = [os.path.join(fname) for fname in X_fnames]
         self.X_full_handlers = [ad.io.snp_unphased(fname) for fname in self.X_full_fnames]
         X = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_full_handlers], axis=1)
+        if self.covs is not None:
+            if not isinstance(self.covs, np.ndarray):
+                raise TypeError("'covs' must be an ndarray.")
+            X = ad.matrix.concatenate(
+                [
+                    ad.matrix.dense(self.covs),
+                    X,
+                ],
+                axis=0,
+            )
 
         if y.squeeze().shape[0] != X.shape[0]:
             raise ValueError("X and y must have same number of rows")
