@@ -12,7 +12,10 @@ class WeightedNormal(object):
     ):
         self._sigma = sigma
         self.grid = grid
-        self.weights = weights
+        self.weights = np.maximum(weights, 1e-40)
+        largest = self.weights.max()
+        c = largest + np.log(np.sum(np.exp(self.weights - largest)))
+        self.weights = np.exp(self.weights - c) 
         self._mu = None
         self.mu = mu
 
@@ -41,11 +44,11 @@ class WeightedNormal(object):
 
             unw_log_pmf = norm.logpdf((self.grid - mu) / sigma)
             self.log_pmf = unw_log_pmf + np.log(self.weights)
-            largest = self.log_pmf.max() - 10
+            largest = self.log_pmf.max()# - 10
             c = largest + np.log(np.sum(np.exp(self.log_pmf - largest)))
             self.pmf = np.exp(self.log_pmf - c)
 
-            self.distr = rv_discrete(values=(self.grid, self.pmf))
+            # self.distr = rv_discrete(values=(self.grid, self.pmf))
 
     
     def cdf(
@@ -58,7 +61,8 @@ class WeightedNormal(object):
             return 0
         elif observed > self.grid[-1]:
             return 1
-        return self.distr.cdf(observed)
+        # return self.distr.cdf(observed)
+        return self.pmf[self.grid <= observed].sum()
     
     
     def find_ci(
@@ -72,7 +76,7 @@ class WeightedNormal(object):
         lb = mu - 20 * sigma
         ct = 0
         while self.cdf(lb, obs_val) < (1+level)/2:
-            if ct == 10:
+            if ct == 1000:
                 assert 0==1
             lb -= 20*sigma
             ct += 1
@@ -80,7 +84,7 @@ class WeightedNormal(object):
         ct = 0
         ub = mu + 20 * sigma
         while self.cdf(ub, obs_val) > (1-level)/2:
-            if ct == 10:
+            if ct == 1000:
                 assert 0==1
             ub += 20*sigma
             ct += 1
@@ -90,6 +94,9 @@ class WeightedNormal(object):
             method='bisect', 
             bracket=[lb, ub], 
 
+            # method='secant', 
+            # x0=ub,
+            # x1=lb,
         ).root
 
         L = root_scalar(
@@ -97,6 +104,9 @@ class WeightedNormal(object):
             method='bisect', 
             bracket=[lb, ub], 
 
+            # method='secant', 
+            # x0=ub,
+            # x1=lb,
         ).root
 
         return L, U

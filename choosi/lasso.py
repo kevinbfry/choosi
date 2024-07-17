@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import adelie as ad
-from scipy.optimize import root_scalar
 from scipy.stats import norm
 
 from .distr import WeightedNormal
@@ -44,6 +43,7 @@ class SplitLasso(Choosir):
  
         self.y_tr = self.y_full[tr_idx]   
         self.y_val = self.y_full[val_idx]
+        self.n_val = len(self.y_val)
         
         self.n_tr = len(self.y_tr)
 
@@ -126,15 +126,10 @@ class SplitLasso(Choosir):
         X = self.X_tr
         y = self.y_tr
 
-        # if not isinstance(X, ad.matrix.MatrixNaiveBase64):
-        #     ad_X = ad.matrix.dense(X)
-        # else:
-        #     ad_X = X
-        
-        # self.glm = glm = ad.glm.gaussian(y) ## TODO: rn just gaussian
         glm = self.glm_tr
 
-        prev_val_obj = np.inf
+        prev_val_obj = 1.
+        twice = False
         self.observed_beta = None
         self.observed_intercept = None
 
@@ -142,38 +137,42 @@ class SplitLasso(Choosir):
         ## Really should do opposite. If lmda is None, should dynamically choose. Else it is provided,
         ## and so should make path with lmda as endpt and fit full path.
         if self.lmda_choice is None:
+            print("picking by Rsq")
             lmda_path = None
             def val_exit_cond(state):
-                # if state.betas.shape[0] < 2:
-                #     return False
 
                 nonlocal prev_val_obj
+                nonlocal twice
 
-                ## TODO: change to Rsq
-                val_obj = ad.diagnostic.objective(
+                etas = ad.diagnostic.predict(
                     X=self.X_val,
-                    glm=self.glm_val,
-                    penalty=self.penalty,
-                    intercepts=state.intercepts[-1:],
                     betas=state.betas[-1:],
-                    lmdas=state.lmdas[-1:],
-                    add_penalty=False,
-                    n_threads=self.n_threads,
-                )[0]
+                    intercepts=state.intercepts[-1:],
+                )
+                resids = ad.diagnostic.residuals(
+                    glm=self.glm_val,
+                    etas=etas,
+                )
+                val_obj = (self.n_val * resids**2).sum() / np.var(self.y_val) - 1 ## objective is -R^2
                 if prev_val_obj < val_obj:
-                    return True
-                else:
-                    prev_val_obj = val_obj
-                
-                    self.observed_beta = state.betas[-1]
-                    if self.fit_intercept:
-                        self.observed_intercept = state.intercepts[-1:]
+                    if twice:
+                        return True
                     else:
-                        self.observed_intercept = np.zeros((1))
+                        twice = True
+                else:
+                    twice = False
 
-                    self.lmda = state.lmdas[-1]
+                prev_val_obj = val_obj
+            
+                self.observed_beta = state.betas[-1]
+                if self.fit_intercept:
+                    self.observed_intercept = state.intercepts[-1:]
+                else:
+                    self.observed_intercept = np.zeros((1))
 
-                    return False
+                self.lmda = state.lmdas[-1]
+
+                return False
             
         elif isinstance(self.lmda_choice, (int, float)):
             self.lmda = self.lmda_choice
@@ -191,9 +190,6 @@ class SplitLasso(Choosir):
             lmda_path = np.concatenate((lmda_path[lmda_path > self.lmda], [self.lmda]))
 
             def val_exit_cond(state):
-                # if state.betas.shape[0] < 2:
-                #     return False
-
                 nonlocal prev_val_obj
                 
                 self.observed_beta = state.betas[-1]
@@ -204,6 +200,8 @@ class SplitLasso(Choosir):
                 return False
             
         elif self.lmda_choice == "mid":
+            ## TODO: think I don't need val_exit_cond here.
+            ##       can just take last beta, intercept
             tmp_state = ad.solver.grpnet(
                 X=self.X_tr,
                 glm=glm,
@@ -218,9 +216,6 @@ class SplitLasso(Choosir):
             self.lmda = lmda_path[-1]
 
             def val_exit_cond(state):
-                # if state.betas.shape[0] < 2:
-                #     return False
-
                 nonlocal prev_val_obj
                 
                 self.observed_beta = state.betas[-1]
@@ -241,14 +236,7 @@ class SplitLasso(Choosir):
             n_threads=self.n_threads,
             progress_bar=False,
         )
-
-        # if len(lmda_path) == 1:
-        #     self.observed_beta = state.betas[-1]
-        #     if self.fit_intercept:
-        #         self.observed_intercept = state.intercepts[-1:]
-        #     else:
-        #         self.observed_intercept = np.zeros((1))
-
+        
         self.observed_beta = self.observed_beta.toarray()
         if self.fit_intercept:
             self.observed_soln = np.concatenate((
@@ -289,15 +277,6 @@ class SplitLasso(Choosir):
 
 
     def extract_event(self):
-        # if not isinstance(self.X_full, ad.matrix.MatrixNaiveBase64):
-        #     self.X_isnumpy = True
-        #     ad_X_full = ad.matrix.dense(self.X_full)
-        #     ad_X = ad.matrix.dense(self.X_tr)
-        # else:
-        #     self.X_isnumpy = False
-        #     ad_X_full = self.X_full
-        #     ad_X = self.X_tr
-
         self.unpen = (self.penalty == 0)
         self.overall = (self.observed_soln != 0)
         self.p_sel = self.overall.sum()
@@ -311,8 +290,7 @@ class SplitLasso(Choosir):
         unpenalized from constraints so that unpenalized
         parameters can be negative.
         """
-        self.signs = np.sign(self.observed_soln)#[self.overall]
-        # self.signs[self.unpen] = 1.
+        self.signs = np.sign(self.observed_soln)
         self.signs = self.signs[self.overall]
 
         etas = ad.diagnostic.predict(
@@ -321,7 +299,6 @@ class SplitLasso(Choosir):
             intercepts=self.observed_intercept,
         )
         resids = ad.diagnostic.residuals(
-            # glm=self.glm_full,
             glm=self.glm_tr,
             etas=etas,
         )
@@ -336,17 +313,15 @@ class SplitLasso(Choosir):
 
         eta = etas[0]
         grad = np.empty_like(eta)
-        # self.glm_full.gradient(eta, grad)
         self.glm_tr.gradient(eta, grad)
         self.W = np.empty_like(eta)
-        # self.glm_full.hessian(eta, grad, self.W)# includes 1/n
         self.glm_tr.hessian(eta, grad, self.W)# includes 1/n
 
         self.beta_unpen = self._selected_estimator(self.X_full, self.glm_full)
 
         ## opt conditional mean, prec
         self.alpha = (1 - self.pi) / self.pi
-        self.H_E, self.H_E_tr, self.H_E_inv, self.H_E_tr_inv = self._compute_hessian()
+        self.H_E, self.H_E_inv = self._compute_hessian()
 
         return self
 
@@ -365,26 +340,10 @@ class SplitLasso(Choosir):
             H_E[np.diag_indices_from(H_E)] += 1e-12 ## TODO: do this dynamically, add enough to get PDness
             H_E_inv = np.linalg.inv(H_E)
 
-        if self.fit_intercept:
-            self.X_E_tr = X_E_tr = np.hstack((np.ones((self.n_tr,1)), self.X_tr))[:, self.overall]
-        else:
-            self.X_E_tr = X_E_tr = self.X_tr[:, self.overall]
-
-        H_E_tr = X_E_tr.T @ X_E_tr / self.n_tr
-
-        try:
-            H_E_tr_inv = np.linalg.inv(H_E_tr)
-        except:
-            H_E_tr[np.diag_indices_from(H_E_tr)] += 1e-12 ## TODO: do this dynamically, add enough to get PDness
-            H_E_tr_inv = np.linalg.inv(H_E_tr)
-
-        return H_E, H_E_tr, H_E_inv, H_E_tr_inv
+        return H_E, H_E_inv
     
 
     def _compute_dispersion(self):
-        # if not hasattr(self, "X_E"):
-        #     raise AttributeError("'X_E' has not been computed. Usually due to not running extract_event() before infer()")
-
         X_ts = self.X_full[self.ts_idx,:]
 
         beta = np.zeros_like(self.observed_soln)
@@ -414,7 +373,7 @@ class SplitLasso(Choosir):
             self.dispersion = dispersion
 
         if method == "mle":
-            return self._infer_MLE()
+            return self._infer_MLE(level=level)
         elif method == "exact":
             return self._infer_exact(level=level)
         
@@ -422,8 +381,6 @@ class SplitLasso(Choosir):
     def _infer_exact(self, level):
 
         ## constraints
-        # self.con_linear = -np.eye(self.p_sel)
-        # self.con_offset = np.zeros(self.p_sel)
         self.con_linear = -np.diag(self.signs)[self.active[self.overall]]
         self.con_offset = self.con_linear @ self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs)# / self.n_full
 
@@ -456,13 +413,11 @@ class SplitLasso(Choosir):
         grids = np.zeros((self.p_sel,n_grid))
         for j in range(self.p_sel):
             t = np.linspace(opts[j] - 10*sigmas[j]/self.alpha, opts[j] + 10*sigmas[j]/self.alpha, n_grid)
-            # t = np.linspace(- 10*sigmas[j], 10*sigmas[j], n_grid)
             zu = (U[j] - t)/sigmas[j]
             zl = (L[j] - t)/sigmas[j]
 
             grids[j,:] = t
             weights[j,:] = norm.cdf(zu) - norm.cdf(zl)
-            # weights[j,:] /= weights[j,:].sum()
 
         return grids, weights
     
@@ -491,22 +446,11 @@ class SplitLasso(Choosir):
     ):
         lower = np.zeros(self.p_sel)
         upper = np.zeros(self.p_sel)
-        # sigmas = np.sqrt(
-        #     np.diag(self.H_E_inv) * self.alpha * self.dispersion / self.n_full
-        # )
-        # opts = self.observed_soln[self.overall]
         opts = self.beta_unpen
         for j in range(self.p_sel):
-            # sigma = sigmas[j]
             cond_distr = cond_distrs[j]
 
             lower[j], upper[j] = cond_distr.find_ci(opts[j], level)
-
-        ## JT does this, but why? get overcoverage with this, undercoverage w/o
-        # lower *= np.diag(self.H_E_inv) * self.dispersion / self.n_full
-        # lower += opts
-        # upper *= np.diag(self.H_E_inv) * self.dispersion / self.n_full
-        # upper += opts
 
         return lower, upper
 
@@ -517,9 +461,7 @@ class SplitLasso(Choosir):
         A = self.con_linear ## don't think this is ever needed as matrix. should restructure to store as vector
         b = self.con_offset
 
-        # cov = self.H_E_inv * (1 + self.alpha) * self.dispersion / self.n_full ## (X'X)^{-1}(1 + \alpha)
         cov = self.H_E_inv * self.dispersion / self.n_full ## (X'X)^{-1}
-        # opt = self.observed_soln[self.overall]
         opt = self.observed_soln[self.overall] + self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs)# / self.n_full ## TODO: should this be observed_soln?
 
         L = np.zeros(self.p_sel)
@@ -542,7 +484,7 @@ class SplitLasso(Choosir):
         return L, U
 
 
-    def _infer_MLE(self):
+    def _infer_MLE(self, level):
         dispersion = self.dispersion
         H_E = self.H_E
         H_E_inv = self.H_E_inv
@@ -567,7 +509,9 @@ class SplitLasso(Choosir):
         sel_MLE = self.beta_unpen + (cond_mean - soln) / alpha
         sel_MLE_std = np.sqrt(np.diag((1 + 1./alpha) * cond_cov - np.linalg.inv(hess_barrier) / alpha**2))
 
-        return (sel_MLE, sel_MLE_std)
+        sigma = norm.ppf((1+level)/2)
+
+        return sel_MLE - sigma * sel_MLE_std, sel_MLE + sigma * sel_MLE_std
 
 
 
@@ -641,18 +585,8 @@ class SplitLassoSNPUnphased(SplitLasso):
             H_E = np.vstack((np.hstack(([[1]],int_col)), H_E))
 
         H_E_inv = np.linalg.inv(H_E)
-        
-        H_E_tr = np.zeros((E, E))
-        hessian(self.X_tr_handlers, subset, np.ones(self.n_tr)/self.n_tr, H_E_tr, self.n_threads)
-        if self.fit_intercept:
-            int_col = np.zeros((1,E))
-            for i in range(len(subset)):
-                int_col[:,i] = self.X_tr.cmul(subset[i], np.ones(self.n_tr), np.ones(self.n_tr) / self.n_tr)
-            H_E_tr = np.hstack((int_col.T, H_E_tr))
-            H_E_tr = np.vstack((np.hstack(([[1]],int_col)), H_E_tr))
 
-        H_E_tr_inv = np.linalg.inv(H_E_tr)
-        return H_E, H_E_tr, H_E_inv, H_E_tr_inv
+        return H_E, H_E_inv
 
 
     
