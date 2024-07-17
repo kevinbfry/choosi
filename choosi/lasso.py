@@ -569,7 +569,7 @@ class SplitLassoSNPUnphased(SplitLasso):
                         ad.matrix.dense(self.covs_tr),
                         self.X_tr,
                     ],
-                    axis=0,
+                    axis=1,
                 )
 
         if X_val_fnames is not None:
@@ -584,7 +584,7 @@ class SplitLassoSNPUnphased(SplitLasso):
                         ad.matrix.dense(self.covs_val),
                         self.X_val,
                     ],
-                    axis=0,
+                    axis=1,
                 )
 
 
@@ -604,7 +604,7 @@ class SplitLassoSNPUnphased(SplitLasso):
                     ad.matrix.dense(self.covs),
                     X,
                 ],
-                axis=0,
+                axis=1,
             )
 
         if y.squeeze().shape[0] != X.shape[0]:
