@@ -467,22 +467,24 @@ class SplitLasso(Choosir):
         cov = self.H_E_inv * self.dispersion / self.n_full ## (X'X)^{-1}
         opt = self.observed_soln[self.overall] + self.H_E_inv @ (self.lmda * self.penalty[self.overall] * self.signs)# / self.n_full ## TODO: should this be observed_soln?
 
-        L = np.zeros(self.p_sel)
-        U = np.zeros(self.p_sel)
-        for j in range(self.p_sel):
-            ## regress target out of opt variables
-            gamma = cov[:,j] / cov[j,j]
-            nuis = opt - gamma * opt[j]
-            Agamma = A.dot(gamma)#A @ gamma ## TODO: should be able to do this as element-wise.
-            Anuis = A.dot(nuis)#A @ nuis
-            bmAnuis = b - Anuis
+        L = np.ones(self.p_sel) * (-np.inf)
+        U = np.ones(self.p_sel) * np.inf
 
-            tol = 1.e-4 * np.fabs(Agamma).max()
+        if len(A) > 0:
+            for j in range(self.p_sel):
+                ## regress target out of opt variables
+                gamma = cov[:,j] / cov[j,j]
+                nuis = opt - gamma * opt[j]
+                Agamma = A.dot(gamma)#A @ gamma ## TODO: should be able to do this as element-wise.
+                Anuis = A.dot(nuis)#A @ nuis
+                bmAnuis = b - Anuis
 
-            L[j] = np.amax((bmAnuis / Agamma)[Agamma < -tol]) if (Agamma < -tol).sum() > 0 else -np.inf
-            U[j] = np.amin((bmAnuis / Agamma)[Agamma > tol]) if (Agamma > tol).sum() > 0 else np.inf
+                tol = 1.e-4 * (np.fabs(Agamma).max() if len(Agamma) > 0 else 1.)
 
-            assert L[j] < U[j] ##TODO: sometimes this gets triggered...
+                L[j] = np.amax((bmAnuis / Agamma)[Agamma < -tol]) if (Agamma < -tol).sum() > 0 else -np.inf
+                U[j] = np.amin((bmAnuis / Agamma)[Agamma > tol]) if (Agamma > tol).sum() > 0 else np.inf
+
+                assert L[j] < U[j] ##TODO: sometimes this gets triggered...
 
         return L, U
 
@@ -531,7 +533,7 @@ class SplitLassoSNPUnphased(SplitLasso):
         val_idx,
         penalty,
         family,
-        covs=None,
+        covs_full=None,
         X_tr_fnames=None, ## NOTE: passing in tr, val fnames may be faster than just idxs
         covs_tr=None,
         X_val_fnames=None,
@@ -541,7 +543,7 @@ class SplitLassoSNPUnphased(SplitLasso):
         n_threads=None,
     ):
 
-        self.covs = covs
+        self.covs_full = covs_full
         self.covs_tr = covs_tr
         self.covs_val = covs_val
 
@@ -562,7 +564,7 @@ class SplitLassoSNPUnphased(SplitLasso):
             self.X_tr_handlers = [ad.io.snp_unphased(fname) for fname in self.X_tr_fnames]
             self.X_tr = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_tr_handlers], axis=1)
             if self.covs_tr is not None:
-                if not isinstance(self.covs, np.ndarray):
+                if not isinstance(self.covs_tr, np.ndarray):
                     raise TypeError("'covs_tr' must be an ndarray.")
                 self.X_tr = ad.matrix.concatenate(
                     [
@@ -577,7 +579,7 @@ class SplitLassoSNPUnphased(SplitLasso):
             self.X_val_handlers = [ad.io.snp_unphased(fname) for fname in self.X_val_fnames]
             self.X_val = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_val_handlers], axis=1)
             if self.covs_val is not None:
-                if not isinstance(self.covs, np.ndarray):
+                if not isinstance(self.covs_val, np.ndarray):
                     raise TypeError("'covs_val' must be an ndarray.")
                 self.X_val = ad.matrix.concatenate(
                     [
@@ -596,12 +598,12 @@ class SplitLassoSNPUnphased(SplitLasso):
         self.X_full_fnames = [os.path.join(fname) for fname in X_fnames]
         self.X_full_handlers = [ad.io.snp_unphased(fname) for fname in self.X_full_fnames]
         X = ad.matrix.concatenate([ad.matrix.snp_unphased(handler) for handler in self.X_full_handlers], axis=1)
-        if self.covs is not None:
-            if not isinstance(self.covs, np.ndarray):
+        if self.covs_full is not None:
+            if not isinstance(self.covs_full, np.ndarray):
                 raise TypeError("'covs' must be an ndarray.")
             X = ad.matrix.concatenate(
                 [
-                    ad.matrix.dense(self.covs),
+                    ad.matrix.dense(self.covs_full),
                     X,
                 ],
                 axis=1,
@@ -614,16 +616,33 @@ class SplitLassoSNPUnphased(SplitLasso):
 
 
     def _compute_hessian(self):
-        E = self.p_sel - self.fit_intercept
-        subset = np.where(self.overall[1:])[0] if self.fit_intercept else np.where(self.overall)[0]
-        H_E = np.zeros((E, E))
-        hessian(self.X_full_handlers, subset, np.ones(self.n_full)/self.n_full, H_E, self.n_threads)
-        if self.fit_intercept:
-            int_col = np.zeros((1,E))
+        # subset = np.where(self.overall[1:])[0] if self.fit_intercept else np.where(self.overall)[0]
+        if self.covs_full is not None:
+            n_covs = self.covs_full.shape[1] + self.fit_intercept
+        else:
+            n_covs = int(self.fit_intercept)
+
+        subset = np.where(self.overall[n_covs:])[0]
+        E = len(subset)
+        H_snps = np.zeros((E, E))
+        weights = np.ones(self.n_full)/self.n_full
+        hessian(self.X_full_handlers, subset, weights, H_snps, self.n_threads)
+        if self.fit_intercept or self.covs_full is not None:
+
+            covs_subset = np.where(self.overall[:n_covs])[0]
+            covs_E = len(covs_subset)
+            covs = np.hstack((np.ones((self.n_full,1)),self.covs_full))[:,covs_subset] if self.fit_intercept else self.covs_full[:,covs_subset]
+
+            H_covs = covs.T @ covs / self.n_full
+
+            H_E = np.zeros((E + covs_E, E + covs_E))
+            H_E[:covs_E,:][:,:covs_E] = H_covs
+            H_E[covs_E:,:][:,covs_E:] = H_snps
+
+            subset = subset + n_covs - self.fit_intercept
             for i in range(len(subset)):
-                int_col[:,i] = self.X_full.cmul(subset[i], np.ones(self.n_full), np.ones(self.n_full) / self.n_full)
-            H_E = np.hstack((int_col.T, H_E))
-            H_E = np.vstack((np.hstack(([[1]],int_col)), H_E))
+                for j in range(covs_E):
+                    H_E[j,covs_E+i] = H_E[covs_E+i,j] = self.X_full.cmul(subset[i], covs[:,j], weights)
 
         H_E_inv = np.linalg.inv(H_E)
 
