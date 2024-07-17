@@ -626,7 +626,8 @@ class SplitLassoSNPUnphased(SplitLasso):
         E = len(subset)
         H_snps = np.zeros((E, E))
         weights = np.ones(self.n_full)/self.n_full
-        hessian(self.X_full_handlers, subset, weights, H_snps, self.n_threads)
+        if E > 0:
+            hessian(self.X_full_handlers, subset, weights, H_snps, self.n_threads)
         if self.fit_intercept or self.covs_full is not None:
 
             covs_subset = np.where(self.overall[:n_covs])[0]
