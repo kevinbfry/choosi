@@ -189,15 +189,16 @@ class SplitLasso(Choosir):
             lmda_path = tmp_state.lmda_path
             lmda_path = np.concatenate((lmda_path[lmda_path > self.lmda], [self.lmda]))
 
-            def val_exit_cond(state):
-                nonlocal prev_val_obj
+            # def val_exit_cond(state):
+            #     nonlocal prev_val_obj
                 
-                self.observed_beta = state.betas[-1]
-                if self.fit_intercept:
-                    self.observed_intercept = state.intercepts[-1:]
-                else:
-                    self.observed_intercept = np.zeros((1))
-                return False
+            #     self.observed_beta = state.betas[-1]
+            #     if self.fit_intercept:
+            #         self.observed_intercept = state.intercepts[-1:]
+            #     else:
+            #         self.observed_intercept = np.zeros((1))
+            #     return False
+            val_exit_cond = None
             
         elif self.lmda_choice == "mid":
             ## TODO: think I don't need val_exit_cond here.
@@ -215,15 +216,16 @@ class SplitLasso(Choosir):
             lmda_path = lmda_path[:len(lmda_path)//2]
             self.lmda = lmda_path[-1]
 
-            def val_exit_cond(state):
-                nonlocal prev_val_obj
+            # def val_exit_cond(state):
+            #     nonlocal prev_val_obj
                 
-                self.observed_beta = state.betas[-1]
-                if self.fit_intercept:
-                    self.observed_intercept = state.intercepts[-1:]
-                else:
-                    self.observed_intercept = np.zeros((1))
-                return False
+            #     self.observed_beta = state.betas[-1]
+            #     if self.fit_intercept:
+            #         self.observed_intercept = state.intercepts[-1:]
+            #     else:
+            #         self.observed_intercept = np.zeros((1))
+            #     return False
+            val_exit_cond = None
 
         state = ad.solver.grpnet(
             X=self.X_tr,
@@ -236,6 +238,10 @@ class SplitLasso(Choosir):
             n_threads=self.n_threads,
             progress_bar=False,
         )
+
+        if val_exit_cond is None:
+            self.observed_intercept = state.intercepts[-1:]
+            self.observed_beta = state.betas[-1]
         
         self.observed_beta = self.observed_beta.toarray()
         if (self.observed_beta != 0).sum() == 0:
