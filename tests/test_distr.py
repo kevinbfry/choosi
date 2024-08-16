@@ -28,7 +28,7 @@ def test_compute_cdf(mu, n, seed):
 @pytest.mark.parametrize("level", [1e-2, 1e-1, 0.5, 1-1e-1, 1-1e-2])
 @pytest.mark.parametrize("n", [10, 50, 100])
 @pytest.mark.parametrize("seed", [0, 5])
-def test_compute_root_cdf(level, n, seed):
+def test_compute_cdf_root(level, n, seed):
     np.random.seed(seed)
     x, w = scipy.special.roots_hermite(n)
     s = int(np.random.choice(n, 1)[0])

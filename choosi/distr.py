@@ -1,6 +1,10 @@
-import numpy as np
-from scipy.stats import norm, rv_discrete
+from .choosi_core.distr import (
+    compute_cdf,
+    compute_cdf_root,
+)
 from scipy.optimize import root_scalar
+from scipy.stats import norm, rv_discrete
+import numpy as np
 
 class WeightedNormal(object):
     def __init__(
@@ -112,3 +116,98 @@ class WeightedNormal(object):
         return L, U
 
     
+class WeightedNormal2(object):
+    """
+
+    The CDF is given by 
+    ..math::
+        \\begin{align*}
+            F(z; \mu) := \\frac{
+                \\int_{-\\infty}^z w(x) \\phi\\left(\\frac{x-\\mu}{\\sigma}\\right) dx
+            }{
+                \\int_{-\\infty}^{\\infty} w(x) \\phi\\left(\\frac{x-\\mu}{\\sigma}\\right) dx
+            }
+        \\end{align*}
+
+    Parameters
+    ----------
+    sigma : float
+        The scale parameter :math:`\\sigma`.
+    hermite_roots : ndarray
+        The Hermite roots as given by :func:`scipy.special.roots_hermite`
+        multiplied by ``np.sqrt(2) * sigma``.
+    hermite_weights : ndarray
+        The Hermite weights as given by :func:`scipy.special.roots_hermite`.
+    weights : ndarray, optional
+        Any non-negative weights :math:`w(x)` evaluated at ``hermite_roots``.
+        If ``None``, it is assumed that :math:`w(x) \\equiv 1``.
+        Default is ``None``.
+    """
+    def __init__(
+        self,
+        sigma: float,
+        hermite_roots: np.ndarray,
+        hermite_weights: np.ndarray,
+        weights: np.ndarray =None,
+    ):
+        self.sigma = sigma
+        self.var = sigma ** 2
+        self.hermite_roots = hermite_roots
+        self.weights = hermite_weights
+        if not (weights is None):
+            self.weights = self.weights * weights
+
+    def cdf(
+        self,
+        obs_val,
+        mu,
+    ):
+        # compute the number of roots <= obs_val
+        # TODO: binary search can make it slightly faster.
+        s = np.sum(self.hermite_roots <= obs_val)
+        return compute_cdf(mu / self.var, s, self.hermite_roots, self.weights)
+        
+    def find_ci(
+        self,
+        obs_val: float,
+        level: float,
+    ):
+        # compute the number of roots <= obs_val
+        # TODO: binary search can make it slightly faster.
+        s = np.sum(self.hermite_roots <= obs_val)
+
+        # construct a grid of nu = mu / sigma ** 2
+        # TODO: if obs_val / sigma is very large in magnitude,
+        # the gridding of nu seems to be very bad!
+        # Needs a more stable initial choice of nus.
+        center = obs_val / self.var
+        width = 3 / self.sigma
+        n_gridpts = 1000
+        nus_orig = np.linspace(center - width, center + width, n_gridpts)
+
+        # compute lower bound
+        lower_level = (1-level) / 2
+        nus = np.copy(nus_orig)
+        Ui = compute_cdf_root(lower_level, nus, s, self.hermite_roots, self.weights)
+        while (Ui <= 0 or Ui >= nus.size):
+            if Ui <= 0:
+                nus -= width
+            else:
+                nus += width
+            Ui = compute_cdf_root(lower_level, nus, s, self.hermite_roots, self.weights)
+        U = nus[Ui]
+
+        # compute upper bound
+        upper_level = (1+level) / 2
+        nus = np.copy(nus_orig)
+        Li = compute_cdf_root(upper_level, nus, s, self.hermite_roots, self.weights)
+        while (Li <= 0 or Li >= nus.size):
+            if Li <= 0:
+                nus -= width
+            else:
+                nus += width
+            Li = compute_cdf_root(upper_level, nus, s, self.hermite_roots, self.weights)
+        L = nus[Li]
+
+        # return the CI on the correct scale
+        return self.var * L, self.var * U
