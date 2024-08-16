@@ -2,9 +2,10 @@ import os
 import pytest
 import numpy as np
 import pandas as pd
-from selectinf.algorithms.barrier_affine import solve_barrier_affine_py
-from selectinf.randomized.snp_lasso import split_lasso_solved, selected_targets
-from selectinf.randomized.lasso import split_lasso
+# TODO: seem unused and not listed as a dependency.
+#from selectinf.algorithms.barrier_affine import solve_barrier_affine_py
+#from selectinf.randomized.snp_lasso import split_lasso_solved, selected_targets
+#from selectinf.randomized.lasso import split_lasso
 import adelie as ad
 import pgenlib as pg
 from choosi.lasso import SplitLasso, SplitLassoSNPUnphased

@@ -1,7 +1,51 @@
-import numpy as np
+from choosi.choosi_core import distr as core_distr
 from choosi.distr import WeightedNormal
-import pytest
 from scipy.stats import norm
+import numpy as np
+import scipy
+import pytest
+
+
+@pytest.mark.parametrize("mu", [-2, -1, 0, 1, 2])
+@pytest.mark.parametrize("n", [1, 5, 10, 20])
+@pytest.mark.parametrize("seed", [0, 5])
+def test_compute_cdf(mu, n, seed):
+    np.random.seed(seed)
+    x = np.random.uniform(-1, 1, n)
+    w = np.random.uniform(0, 1, n)
+    s = int(np.random.choice(n, 1)[0])
+
+    actual = core_distr.compute_cdf(mu, s, x, w)
+
+    x_mu = x * mu
+    x_mu_max = np.max(x_mu)
+    integrand = w * np.exp(x_mu - x_mu_max)
+    expected = np.sum(integrand[:s]) / np.sum(integrand)
+
+    assert np.allclose(actual, expected)
+
+
+@pytest.mark.parametrize("level", [1e-2, 1e-1, 0.5, 1-1e-1, 1-1e-2])
+@pytest.mark.parametrize("n", [10, 50, 100])
+@pytest.mark.parametrize("seed", [0, 5])
+def test_compute_root_cdf(level, n, seed):
+    np.random.seed(seed)
+    x, w = scipy.special.roots_hermite(n)
+    s = int(np.random.choice(n, 1)[0])
+    mu = np.linspace(-5, 5, 1000)
+
+    actual = core_distr.compute_cdf_root(level, mu, s, x, w)
+
+    def _cdf(mu):
+        x_mu = x * mu
+        x_mu_max = np.max(x_mu)
+        integrand = w * np.exp(x_mu - x_mu_max)
+        return np.sum(integrand[:s]) / np.sum(integrand)
+
+    cdfs = np.array([_cdf(m) for m in mu])
+    expected = np.sum(cdfs > level)
+
+    assert actual == expected
 
 
 @pytest.mark.parametrize("mu, sigma, n_grid", [
