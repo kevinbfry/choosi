@@ -11,6 +11,7 @@ from scipy.optimize import root_scalar
 from scipy.stats import norm, rv_discrete
 from typing import Union
 import numpy as np
+import warnings
 
 class WeightedNormal(object):
     def __init__(
@@ -129,7 +130,7 @@ class WeightedNormal2(object):
 
     ..math::
         \\begin{align*}
-            F(z; \mu) := \\frac{
+            F(z; \\mu) := \\frac{
                 \\int_{-\\infty}^z w(x) \\phi\\left(\\frac{x-\\mu}{\\sigma}\\right) dx
             }{
                 \\int_{-\\infty}^{\\infty} w(x) \\phi\\left(\\frac{x-\\mu}{\\sigma}\\right) dx
@@ -309,6 +310,16 @@ class WeightedNormal2(object):
 
         # return CI on original scale
         L, U = self.scale * L, self.scale * U
+
+        # Check that the CDFs at the bounds are close to the desired levels.
+        # _compute_cdf_root may have exited just because the range was getting too small.
+        cdf_L = self.cdf(L)
+        cdf_U = self.cdf(U)
+        if not (
+            np.allclose(cdf_L, upper_level, atol=1e-2) &
+            np.allclose(cdf_U, lower_level, atol=1e-2) 
+        ):
+            warnings.warn("CDF bounds may be inaccurate")
 
         if verbose:
             return L, U, L_search_iters, U_search_iters, L_iters, U_iters,

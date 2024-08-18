@@ -2,8 +2,11 @@ import os
 import numpy as np
 import adelie as ad
 from scipy.stats import norm
-
-from .distr import WeightedNormal
+from scipy.special import (
+    roots_hermite,
+    roots_laguerre,
+)
+from .distr import WeightedNormal2
 from .optimizer import CQNMOptimizer
 from .choosir import Choosir
 from .choosi_core.matrix import hessian
@@ -396,11 +399,8 @@ class SplitLasso(Choosir):
         ## compute unrandomized intervals
         L, U = self._compute_unrand_trunc()
 
-        ## convolve with randomization noise
-        grids, weights = self._convolve_with_rand(L, U)
-
         ## use convolution as weights in conditional distribution of \hat\beta \mid selection
-        cond_distrs = self._form_cond_distr(grids, weights)
+        cond_distrs = self._form_cond_distr(L, U)
 
         ## 1D-root finding for each target
         lower, upper = self._find_roots(cond_distrs, level) ## TODO: update with level parameter
@@ -432,19 +432,31 @@ class SplitLasso(Choosir):
     
 
     def _form_cond_distr(
-        self,
-        grids,
-        weights,
+        self, 
+        L, 
+        U,
     ):
         sigmas = np.sqrt(np.diag(self.H_E_inv) * self.dispersion / self.n_full)
+        taus = sigmas * np.sqrt(self.alpha)
+        laguerre = roots_laguerre(100)
+        subset = laguerre[1] >= 1e-24
+        laguerre = (
+            laguerre[0][subset],
+            laguerre[1][subset],
+        )
+        hermite = roots_hermite(20)
+
         return [
-            WeightedNormal(
-                mu=self.observed_soln[self.overall][i],
+            WeightedNormal2(
+                observed=self.beta_unpen[i],
                 sigma=sigmas[i],
-                grid=grids[i,:],
-                weights=weights[i,:],
+                w_s=taus[i],
+                w_l=L[i],
+                w_u=U[i],
+                laguerre=laguerre,
+                hermite=hermite,
             ) 
-            for i in range(weights.shape[0])
+            for i in range(L.shape[0])
         ]
 
 
@@ -455,11 +467,10 @@ class SplitLasso(Choosir):
     ):
         lower = np.zeros(self.p_sel)
         upper = np.zeros(self.p_sel)
-        opts = self.beta_unpen
         for j in range(self.p_sel):
             cond_distr = cond_distrs[j]
 
-            lower[j], upper[j] = cond_distr.find_ci(opts[j], level)
+            lower[j], upper[j] = cond_distr.find_ci(level)
 
         return lower, upper
 
