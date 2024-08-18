@@ -18,7 +18,7 @@ auto compute_weights(
         ((z-u_z) / s_z_scaled).erfc()
         - 
         ((z-l_z) / s_z_scaled).erfc()
-    );
+    ).max(1e-100);
 }
 
 /**
@@ -51,7 +51,7 @@ ValueType compute_cdf(
     const auto diff = a_z - mu_z;
     const auto numer = (
         w_pool_L
-        * (-(z_L - (diff + 0.5)).square() + 0.25 + diff).exp()
+        * (-(z_L - (diff + 0.5)).square() + (0.25 + diff)).exp()
     ).sum();
     const auto denom = (
         xi_H 
@@ -113,7 +113,7 @@ auto compute_cdf_root(
         ++iters;
         const auto mu_cand = compute_cand();
         const auto sf_cand = compute_sf(mu_cand);
-        if (std::abs(sf_cand - alpha) <= tol) break;
+        if (std::abs(sf_cand - alpha) <= tol || std::abs(upper-lower) <= tol) break;
         lower = (sf_cand < alpha) ? mu_cand : lower;
         upper = (sf_cand < alpha) ? upper : mu_cand;
     }
