@@ -147,6 +147,8 @@ class WeightedNormal2(object):
 
     Parameters
     ----------
+    observed : float
+        The observed value :math:`z`.
     sigma : float
         The scale parameter :math:`\\sigma`.
     w_s : float
@@ -157,15 +159,16 @@ class WeightedNormal2(object):
         The upper argument :math:`u` to :math:`w(\cdot)`.
     laguerre : ndarray, optional
         The Laguerre roots and weights as given by :func:`scipy.special.roots_laguerre`.
-        If ``None``, it is initialized with ``scipy.special.roots_laguerre(100)``.
+        If ``None``, it is initialized internally in an implementation-specific way.
         Default is ``None``.
     hermite : ndarray, optional
         The Hermite roots and weights as given by :func:`scipy.special.roots_hermite`.
-        If ``None``, it is initialized with ``scipy.special.roots_hermite(10)``.
+        If ``None``, it is initialized internally in an implementation-specific way.
         Default is ``None``.
     """
     def __init__(
         self,
+        observed: float,
         sigma: float,
         w_s: float,
         w_l: float,
@@ -173,10 +176,12 @@ class WeightedNormal2(object):
         laguerre: Union[tuple, None] =None,
         hermite: Union[tuple, None] =None,
     ):
+        self.observed = observed
         self.sigma = sigma
         if self.sigma <= 0:
             raise ValueError("sigma must be > 0.")
         self.scale = sigma * np.sqrt(2)
+        self.a_z = observed / self.scale
         self.w_args = (w_s / self.scale, w_l / self.scale, w_u / self.scale)
         if self.w_args[0] <= 0:
             raise ValueError("w_s must be > 0.")
@@ -186,72 +191,74 @@ class WeightedNormal2(object):
         self.hermite = hermite
         if laguerre is None:
             self.laguerre = roots_laguerre(100)
+            subset = self.laguerre[1] >= 1e-24
+            self.laguerre = (
+                self.laguerre[0][subset],
+                self.laguerre[1][subset],
+            )
         if hermite is None:
-            self.hermite = roots_hermite(10)
+            self.hermite = roots_hermite(20)
+        self.w_pool_L = self._compute_w_pool_L()
 
     def _compute_weights(self, z):
         return compute_weights(z, *self.w_args)
 
-    def _compute_w_pool_L(self, a_z):
-        return self.laguerre[1] * self._compute_weights(a_z - self.laguerre[0])
+    def _compute_w_pool_L(self):
+        return self.laguerre[1] * self._compute_weights(self.a_z - self.laguerre[0])
 
-    def _compute_cdf(self, mu_z, a_z, w_pool_L):
+    def _compute_numerator(self, mu):
+        """Debug purposes."""
+        mu_z = mu / self.scale
+        z_L = self.laguerre[0]
+        diff = self.a_z - mu_z
+        return np.sum(self.w_pool_L * np.exp(-np.square(z_L - (diff + 0.5)) + (0.25 + diff)))
+
+    def _compute_denominator(self, mu):
+        """Debug purposes."""
+        mu_z = mu / self.scale
+        z_H = self.hermite[0]
+        xi_H = self.hermite[1]
+        return np.sum(xi_H * self._compute_weights(mu_z + z_H))
+
+    def _compute_cdf(self, mu_z):
         return compute_cdf(
             mu_z, 
-            a_z,
+            self.a_z,
             self.laguerre[0],
-            w_pool_L,
+            self.w_pool_L,
             self.hermite[0], 
             self.hermite[1],
             *self.w_args,
         )
 
-    def _compute_cdf_root(self, level, lower, upper, a_z, w_pool_L, tol):
+    def _compute_cdf_root(self, level, lower, upper, tol):
         return compute_cdf_root(
             level, 
             lower, 
             upper, 
-            a_z, 
+            self.a_z, 
             self.laguerre[0],
-            w_pool_L,
+            self.w_pool_L,
             self.hermite[0], 
             self.hermite[1],
             *self.w_args,
             tol,
         )
 
-    def cdf(
-        self,
-        obs_val,
-        mu,
-    ):
-        mu_z = mu / self.scale
-        a_z = obs_val / self.scale
-        w_pool_L = self._compute_w_pool_L(a_z)
-        return self._compute_cdf(mu_z, a_z, w_pool_L)
+    def cdf(self, mu):
+        return self._compute_cdf(mu / self.scale)
         
     def find_ci(
         self,
-        obs_val: float,
         level: float,
         verbose: bool =False,
         tol: float =1e-9,
     ):
-        # standardize observed value
-        a_z = obs_val / self.scale
-
-        # optimization: compute pooled weights
-        w_pool_L = self._compute_w_pool_L(a_z)
-
-        # collect cdf arguments
-        cdf_args = (
-            a_z,
-            w_pool_L,
-        )
+        a_z = self.a_z
 
         # construct an initial grid of nu = mu / self.scale
         center = a_z
-        width = 2
+        width = 3
 
         # compute the range of nu containing lower_level
         def _compute_range(level, direction):
@@ -267,12 +274,12 @@ class WeightedNormal2(object):
             )
 
             # keep sliding the window until it contains the desired level
-            cdf = self._compute_cdf(nu_moving, *cdf_args)
+            cdf = self._compute_cdf(nu_moving)
             while direction * (cdf - level) > 0:
                 nu_dist = abs(nu_moving - nu_following) if iters else width
                 nu_following = nu_moving
                 nu_moving += direction * 2 * nu_dist
-                cdf = self._compute_cdf(nu_moving, *cdf_args)
+                cdf = self._compute_cdf(nu_moving)
                 iters += 1
 
             # order the window in increasing order
@@ -297,8 +304,8 @@ class WeightedNormal2(object):
         )
 
         # compute CI bounds
-        U, U_iters = self._compute_cdf_root(lower_level, U_lower, U_upper, *cdf_args, tol)
-        L, L_iters = self._compute_cdf_root(upper_level, L_lower, L_upper, *cdf_args, tol)
+        U, U_iters = self._compute_cdf_root(lower_level, U_lower, U_upper, tol)
+        L, L_iters = self._compute_cdf_root(upper_level, L_lower, L_upper, tol)
 
         # return CI on original scale
         L, U = self.scale * L, self.scale * U
